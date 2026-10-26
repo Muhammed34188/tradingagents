@@ -80,9 +80,17 @@ def market(ticker):
         "change_pct": round((latest["close"]/bars[0]["close"]-1)*100,2),
     }
 
+class ClosingConnection(sqlite3.Connection):
+    """Commit/rollback and close after a with-block, unlike sqlite3's default."""
+    def __exit__(self, exc_type, exc_val, exc_tb):
+        try:
+            return super().__exit__(exc_type, exc_val, exc_tb)
+        finally:
+            self.close()
+
 def connect():
     ROOT.mkdir(parents=True, exist_ok=True)
-    db = sqlite3.connect(str(DB), timeout=10, isolation_level=None)
+    db = sqlite3.connect(str(DB), timeout=10, isolation_level=None, factory=ClosingConnection)
     db.row_factory = sqlite3.Row
     db.execute("PRAGMA busy_timeout = 10000")
     db.execute("PRAGMA journal_mode = WAL")
