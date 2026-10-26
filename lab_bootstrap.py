@@ -21,6 +21,12 @@ for directory, directories, files in os.walk(ROOT):
         p = Path(directory) / name
         if not p.is_symlink():
             os.chown(p, user.pw_uid, user.pw_gid)
+os.environ["HOME"] = user.pw_dir
+os.environ["USER"] = user.pw_name
+os.environ["LOGNAME"] = user.pw_name
+os.environ["XDG_CACHE_HOME"] = str(ROOT / "cache")
+# Required because the container starts as root to prepare the Railway volume,
+# while the actual analysis runs under the unprivileged appuser identity.
 os.setgroups([])
 os.setgid(user.pw_gid)
 os.setuid(user.pw_uid)
