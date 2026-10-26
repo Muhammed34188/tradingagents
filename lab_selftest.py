@@ -269,8 +269,8 @@ class PaperTradeTests(unittest.TestCase):
         self.assertEqual(a["validation_metrics"],b["validation_metrics"])
         # The intentionally manipulated first held-out period CAN change its return.
         self.assertNotEqual(
-            wf.simulate(original,200,250,"buyhold")["return_pct"],
-            wf.simulate(modified,200,250,"buyhold")["return_pct"])
+            wf.simulate(original,200,250,"buyhold")["max_drawdown_pct"],
+            wf.simulate(modified,200,250,"buyhold")["max_drawdown_pct"])
 
     def test_walkforward_no_lookahead_and_unfinished_day_excluded(self):
         import lab_walkforward as wf
