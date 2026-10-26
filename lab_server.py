@@ -11,6 +11,7 @@ from html import escape
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from urllib.parse import parse_qs, urlsplit
+import lab_terminal
 
 PASSWORD = os.environ.get("LAB_PASSWORD", "")
 if not PASSWORD:
@@ -50,6 +51,10 @@ a{color:#79e9bc}.footer{font-size:12px;color:#8794b2;margin-top:26px;line-height
 </style></head><body><main>
 <div class="top"><div class="mark">◈</div><div><h1>TradingAgents Lab</h1>
 <div class="sub">Çoklu yapay zekâ • Kripto araştırması • Sanal test</div></div></div>
+<div class="card" style="border-color:#277c65;background:#12332f"><h2>TradingAgents Terminal</h2>
+<p class="st">BTC / ETH gecikmeli grafik, AL / SAT / BEKLE özeti, 100$ sanal portföy ve geçmişe dönük strateji testleri.</p>
+<a href="/terminal" style="display:block;background:#55dfaf;color:#063528;text-align:center;padding:13px;border-radius:12px;text-decoration:none;font-weight:800">Terminali aç →</a>
+</div>
 <div class="card"><span class="tag" id="provider">Servis kontrol ediliyor</span>
 <h2 style="font-size:20px;margin:18px 0 4px">Yeni piyasa analizi</h2>
 <small>BTC/ETH kararları araştırma amaçlıdır; emir gönderilmez.</small>
@@ -318,6 +323,30 @@ class Handler(BaseHTTPRequestHandler):
             return self.json_reply(200, {"ok": True})
         if not self.verify():
             return
+        if route.path == "/terminal":
+            path = Path(__file__).with_name("lab_terminal.html")
+            return self.reply(200, path.read_bytes(), "text/html", {
+                "Content-Security-Policy": "default-src 'self'; script-src 'unsafe-inline'; style-src 'unsafe-inline'; connect-src 'self'; base-uri 'none'; frame-ancestors 'none'"})
+        if route.path in ("/api/market", "/api/portfolio", "/api/ai-signal", "/api/backtest"):
+            q = parse_qs(route.query)
+            try:
+                if route.path == "/api/portfolio":
+                    value = lab_terminal.portfolio()
+                else:
+                    ticker = q.get("ticker", [""])[0]
+                    lab_terminal.valid_ticker(ticker)
+                    if route.path == "/api/market":
+                        value = lab_terminal.market(ticker)
+                    elif route.path == "/api/ai-signal":
+                        value = lab_terminal.signal(DATA, ticker)
+                    else:
+                        value = lab_terminal.backtest(ticker)
+                return self.json_reply(200, value)
+            except ValueError as exc:
+                return self.json_reply(422, {"error": str(exc)})
+            except (OSError, RuntimeError) as exc:
+                print("Terminal GET issue: " + type(exc).__name__, flush=True)
+                return self.json_reply(503, {"error": "Veri servisi geçici olarak kullanılamıyor."})
         if route.path == "/":
             return self.reply(200, PAGE, "text/html",
                               {"Content-Security-Policy": "default-src 'self'; script-src 'unsafe-inline'; style-src 'unsafe-inline'; connect-src 'self'; base-uri 'none'; frame-ancestors 'none'"})
@@ -346,6 +375,21 @@ class Handler(BaseHTTPRequestHandler):
     def do_POST(self):
         if not self.verify():
             return
+        if urlsplit(self.path).path == "/api/paper/order":
+            if self.headers.get("X-Lab-Action") != "1" or not self.headers.get("Content-Type", "").startswith("application/json"):
+                return self.json_reply(403, {"error": "Güvenlik kontrolü başarısız."})
+            try:
+                length = int(self.headers.get("Content-Length", "0"))
+                if length < 2 or length > 1024:
+                    raise ValueError("Geçersiz istek.")
+                payload = json.loads(self.rfile.read(length))
+                value = lab_terminal.paper_order(payload)
+                return self.json_reply(200, value)
+            except (TypeError, KeyError, ValueError, json.JSONDecodeError) as exc:
+                return self.json_reply(422, {"error": str(exc)})
+            except Exception as exc:
+                print("Paper order issue: " + type(exc).__name__, flush=True)
+                return self.json_reply(503, {"error": "Sanal emir tamamlanamadı; veri erişimini kontrol edin."})
         if urlsplit(self.path).path != "/api/run":
             return self.json_reply(404, {"error": "Bulunamadı"})
         if self.headers.get("X-Lab-Action") != "1" or not self.headers.get("Content-Type", "").startswith("application/json"):
