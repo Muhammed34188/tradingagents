@@ -1,0 +1,250 @@
+"""Private, research-only mobile panel for TradingAgents on Railway."""
+import base64
+import hmac
+import json
+import os
+import re
+import subprocess
+import threading
+from datetime import date, datetime
+from html import escape
+from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+from pathlib import Path
+from urllib.parse import parse_qs, urlsplit
+
+PASSWORD = os.environ.get("LAB_PASSWORD", "")
+if not PASSWORD:
+    raise SystemExit("LAB_PASSWORD must be configured; refusing to expose the panel.")
+DATA = Path(os.environ.get("TRADINGAGENTS_RESULTS_DIR", "/home/appuser/.tradingagents/results"))
+LOG = Path("/home/appuser/.tradingagents/lab-run.log")
+TICKERS = {"BTC-USD": "Bitcoin", "ETH-USD": "Ethereum"}
+PROVIDER_KEYS = {
+    "openai": "OPENAI_API_KEY", "google": "GOOGLE_API_KEY",
+    "anthropic": "ANTHROPIC_API_KEY", "openrouter": "OPENROUTER_API_KEY",
+    "deepseek": "DEEPSEEK_API_KEY", "groq": "GROQ_API_KEY",
+}
+PROVIDER = os.environ.get("TRADINGAGENTS_LLM_PROVIDER", "openai").lower()
+LOCK = threading.Lock()
+STATE = {"running": False, "status": "Henüz analiz yapılmadı", "ticker": None,
+         "date": None, "started": None, "finished": None, "exit_code": None,
+         "daily_date": None, "daily_count": 0}
+MAX_DAILY_RUNS = 4
+
+PAGE = r"""<!doctype html><html lang="tr"><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>TradingAgents Lab</title>
+<style>
+:root{color-scheme:dark;font-family:ui-sans-serif,-apple-system,system-ui,Arial,sans-serif;background:#0a1020;color:#edf2ff}
+*{box-sizing:border-box}body{margin:0;padding:28px 18px;min-height:100vh}
+main{max-width:630px;margin:auto}.top{display:flex;gap:12px;align-items:center;margin-bottom:22px}
+.mark{background:#132f30;border:1px solid #1c7260;color:#62ffc4;padding:15px;border-radius:17px;font-size:23px}
+h1{font-size:25px;margin:0}.sub{color:#9aa8c5;font-size:13px;margin-top:5px}
+.card{background:#111a2c;border:1px solid #293650;border-radius:18px;padding:22px;margin:14px 0}
+small{color:#9aa8c5}label{display:block;font-size:13px;margin:18px 0 8px;color:#c8d1ea}
+select,input{font-size:16px;width:100%;padding:13px;border:1px solid #34415c;background:#0c1526;color:#fff;border-radius:12px}
+button{width:100%;padding:15px;margin-top:22px;border:none;border-radius:12px;background:#56e2aa;color:#081c19;font-weight:800;font-size:16px}
+button:disabled{opacity:.45}.tag{background:#183d32;color:#68e7b4;padding:6px 10px;border-radius:10px;font-size:12px}
+.st{color:#b7c7e5;font-size:14px;white-space:pre-wrap}.notice{border-left:3px solid #caac67;padding:10px 14px;color:#b8c1d8;background:#1d2434;font-size:13px;line-height:1.65}
+a{color:#79e9bc}.footer{font-size:12px;color:#8794b2;margin-top:26px;line-height:1.6}
+</style></head><body><main>
+<div class="top"><div class="mark">◈</div><div><h1>TradingAgents Lab</h1>
+<div class="sub">Çoklu yapay zekâ • Kripto araştırması • Sanal test</div></div></div>
+<div class="card"><span class="tag" id="provider">Servis kontrol ediliyor</span>
+<h2 style="font-size:20px;margin:18px 0 4px">Yeni piyasa analizi</h2>
+<small>BTC/ETH kararları araştırma amaçlıdır; emir gönderilmez.</small>
+<label for="ticker">Varlık</label>
+<select id="ticker"><option value="BTC-USD">Bitcoin (BTC-USD)</option><option value="ETH-USD">Ethereum (ETH-USD)</option></select>
+<label for="day">Analiz tarihi</label><input type="date" id="day">
+<button id="run" disabled>Analizi başlat</button></div>
+<div class="card"><h2 style="font-size:18px;margin:0 0 12px">Çalışma durumu</h2>
+<div class="st" id="status">Yükleniyor...</div>
+<p id="report"></p></div>
+<div class="notice">Bu araştırma yazılımı kazanç garantisi vermez. API sağlayıcısı işlem başına ücret alabilir. Günlük en fazla 4 analiz ve aynı anda tek analiz sınırlaması vardır. Gerçek borsa API bağlantısı veya otomatik al-sat özelliği yoktur.</div>
+<div class="footer">TauricResearch/TradingAgents açık kaynak projesini kullanır. Bu panel yalnızca özel laboratuvar ortamıdır. Analiz sonuçları Railway servisi yeniden oluşturulduğunda kaybolabilir.</div>
+</main><script>
+const el=id=>document.getElementById(id);
+el('day').value=new Date().toLocaleDateString('en-CA');
+async function poll(){
+ try{
+ const res=await fetch('/api/status',{cache:'no-store'});
+ if(!res.ok) throw Error('Sunucu yanıtı '+res.status);
+ const s=await res.json();
+ el('provider').textContent=s.provider_ready?'Yapay zekâ bağlantısı hazır':'API anahtarı bekleniyor';
+ el('run').disabled=!!s.running||!s.provider_ready||s.daily_remaining===0;
+ el('status').textContent=s.status+'\n'+(s.ticker?'Varlık: '+s.ticker+' | Tarih: '+s.date+'\n':'')+
+ 'Kalan günlük analiz: '+s.daily_remaining;
+ el('report').replaceChildren();
+ if(s.report_url){let a=document.createElement('a');a.href=s.report_url;a.textContent='Tam analiz raporunu aç';a.target='_blank';a.rel='noopener';el('report').appendChild(a);}
+ }catch(err){el('status').textContent='Bağlantı hatası: '+err.message;}
+}
+el('run').onclick=async()=>{
+ if(!confirm('Yapay zekâ analizi API kullanım maliyeti doğurabilir. Başlatılsın mı?'))return;
+ el('run').disabled=true;
+ try{
+ const res=await fetch('/api/run',{method:'POST',headers:{'Content-Type':'application/json','X-Lab-Action':'1'},
+ body:JSON.stringify({ticker:el('ticker').value,date:el('day').value})});
+ const body=await res.json();if(!res.ok)alert(body.error||'Başlatılamadı');
+ }catch(err){alert('Bağlantı hatası: '+err.message)}
+ await poll();
+};
+poll();setInterval(poll,7000);
+</script></body></html>"""
+
+def authorized(handler):
+    header = handler.headers.get("Authorization", "")
+    if not header.startswith("Basic "):
+        return False
+    try:
+        payload = base64.b64decode(header[6:], validate=True).decode("utf-8")
+        name, password = payload.split(":", 1)
+    except (ValueError, UnicodeDecodeError):
+        return False
+    return hmac.compare_digest(name, "admin") and hmac.compare_digest(password, PASSWORD)
+
+def valid_day(value):
+    if not isinstance(value, str) or not re.fullmatch(r"\d{4}-\d{2}-\d{2}", value):
+        return False
+    try:
+        return date.fromisoformat(value) <= date.today()
+    except ValueError:
+        return False
+
+def provider_ready():
+    return bool(os.environ.get(PROVIDER_KEYS.get(PROVIDER, "_UNKNOWN_KEY"), "").strip())
+
+def report_path(ticker, day):
+    return DATA / ticker / day / "reports" / "complete_report.html"
+
+def snapshot():
+    with LOCK:
+        if STATE["daily_date"] != date.today().isoformat():
+            STATE["daily_date"] = date.today().isoformat()
+            STATE["daily_count"] = 0
+        s = dict(STATE)
+    s["daily_remaining"] = max(0, MAX_DAILY_RUNS - s["daily_count"])
+    s["provider_ready"] = provider_ready()
+    s["report_url"] = (
+        "/report?ticker=" + s["ticker"] + "&date=" + s["date"]
+        if s["ticker"] in TICKERS and valid_day(s["date"] or "")
+        and report_path(s["ticker"], s["date"]).is_file()
+        else None
+    )
+    s.pop("daily_date", None)
+    s.pop("daily_count", None)
+    return s
+
+def worker(ticker, day):
+    cmd = ["tradingagents", "--ticker", ticker, "--date", day,
+           "--analysts", "market,news", "--save", "--no-show", "--html"]
+    LOG.parent.mkdir(parents=True, exist_ok=True)
+    code = -1
+    detail = "İşlem tamamlanamadı."
+    try:
+        with LOG.open("w", encoding="utf-8") as out:
+            result = subprocess.run(cmd, stdin=subprocess.DEVNULL, stdout=out,
+                                    stderr=subprocess.STDOUT, timeout=1800,
+                                    check=False, env=os.environ.copy())
+            code = result.returncode
+            detail = "Analiz tamamlandı. Rapor bağlantısı aşağıda." if code == 0 else (
+                "Analiz hata ile durdu. API anahtarını, model erişimini ve Railway kayıtlarını kontrol et.")
+    except subprocess.TimeoutExpired:
+        detail = "Analiz 30 dakikalık çalışma sınırını aştı ve sonlandırıldı."
+    except Exception:
+        detail = "Analiz başlatılırken servis hatası oluştu."
+    finally:
+        with LOCK:
+            STATE.update(running=False, status=detail, exit_code=code,
+                         finished=datetime.now().isoformat(timespec="seconds"))
+
+class Handler(BaseHTTPRequestHandler):
+    def reply(self, code, content, typ="application/json", extra=None):
+        data = content.encode("utf-8") if isinstance(content, str) else content
+        self.send_response(code)
+        self.send_header("Content-Type", typ + "; charset=utf-8")
+        self.send_header("Content-Length", str(len(data)))
+        self.send_header("Cache-Control", "no-store")
+        self.send_header("X-Content-Type-Options", "nosniff")
+        self.send_header("Referrer-Policy", "no-referrer")
+        self.send_header("X-Frame-Options", "DENY")
+        for k, v in (extra or {}).items():
+            self.send_header(k, v)
+        self.end_headers()
+        self.wfile.write(data)
+
+    def json_reply(self, code, value):
+        self.reply(code, json.dumps(value, ensure_ascii=False))
+
+    def verify(self):
+        if authorized(self):
+            return True
+        self.json_reply(401, {"error": "Giriş gerekli."}) if False else self.reply(
+            401, "Kimlik doğrulama gerekli.", "text/plain",
+            {"WWW-Authenticate": 'Basic realm="TradingAgents Lab", charset="UTF-8"'})
+        return False
+
+    def do_GET(self):
+        route = urlsplit(self.path)
+        if route.path == "/health":
+            return self.json_reply(200, {"ok": True})
+        if not self.verify():
+            return
+        if route.path == "/":
+            return self.reply(200, PAGE, "text/html",
+                              {"Content-Security-Policy": "default-src 'self'; script-src 'unsafe-inline'; style-src 'unsafe-inline'; connect-src 'self'; base-uri 'none'; frame-ancestors 'none'"})
+        if route.path == "/api/status":
+            return self.json_reply(200, snapshot())
+        if route.path == "/report":
+            q = parse_qs(route.query)
+            ticker = q.get("ticker", [""])[0]
+            day = q.get("date", [""])[0]
+            if ticker not in TICKERS or not valid_day(day):
+                return self.json_reply(400, {"error": "Geçersiz rapor."})
+            report = report_path(ticker, day)
+            if not report.is_file():
+                return self.json_reply(404, {"error": "Rapor bulunamadı."})
+            return self.reply(200, report.read_bytes(), "text/html", {
+                "Content-Security-Policy": "sandbox; default-src 'none'; style-src 'unsafe-inline'; img-src data:; base-uri 'none'"})
+        return self.json_reply(404, {"error": "Bulunamadı"})
+
+    def do_POST(self):
+        if not self.verify():
+            return
+        if urlsplit(self.path).path != "/api/run":
+            return self.json_reply(404, {"error": "Bulunamadı"})
+        if self.headers.get("X-Lab-Action") != "1" or not self.headers.get("Content-Type", "").startswith("application/json"):
+            return self.json_reply(403, {"error": "Güvenlik kontrolü başarısız."})
+        try:
+            length = int(self.headers.get("Content-Length", "0"))
+            if not 0 < length <= 2000:
+                raise ValueError()
+            payload = json.loads(self.rfile.read(length))
+            ticker, day = payload["ticker"], payload["date"]
+            if ticker not in TICKERS or not valid_day(day):
+                raise ValueError()
+        except (ValueError, TypeError, KeyError, json.JSONDecodeError):
+            return self.json_reply(400, {"error": "Geçerli sembol ve tarih seç."})
+        if not provider_ready():
+            return self.json_reply(409, {"error": "Railway'de sağlayıcı API anahtarı tanımlanmalı."})
+        with LOCK:
+            today = date.today().isoformat()
+            if STATE["daily_date"] != today:
+                STATE["daily_date"], STATE["daily_count"] = today, 0
+            if STATE["running"]:
+                return self.json_reply(409, {"error": "Önceki analiz halen çalışıyor."})
+            if STATE["daily_count"] >= MAX_DAILY_RUNS:
+                return self.json_reply(429, {"error": "Bugünkü analiz sınırına ulaşıldı."})
+            STATE["daily_count"] += 1
+            STATE.update(running=True, status="Analistler çalışıyor...", ticker=ticker, date=day,
+                         started=datetime.now().isoformat(timespec="seconds"),
+                         finished=None, exit_code=None)
+        threading.Thread(target=worker, args=(ticker, day), daemon=True).start()
+        return self.json_reply(202, {"ok": True})
+
+    def log_message(self, fmt, *args):
+        # No request bodies, authorization headers or API keys in server logs.
+        pass
+
+if __name__ == "__main__":
+    port = int(os.environ.get("PORT", "8080"))
+    print(f"TradingAgents Lab listening on {port}", flush=True)
+    ThreadingHTTPServer(("0.0.0.0", port), Handler).serve_forever()
