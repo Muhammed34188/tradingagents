@@ -227,6 +227,90 @@ class PaperTradeTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError,"tekrarsız"):
             lab_compare.calculate(bars,"ETH-USD")
 
+    @staticmethod
+    def walk_bars(size=350):
+        import math
+        start=datetime(2025,1,1,tzinfo=timezone.utc)
+        return [{"time":(start+timedelta(days=i)).isoformat(),
+                 "open":100+i*.06+6*math.sin(i/14),
+                 "close":100+i*.06+6*math.sin(i/14)+math.sin(i/3)}
+                for i in range(size)]
+
+    def test_walkforward_heldout_folds_and_fee_baselines(self):
+        import lab_walkforward as wf
+        bars=self.walk_bars()
+        with patch.object(l,"get_series",return_value=bars):
+            r=wf.run("BTC-USD")
+        self.assertEqual(r["fold_count"],3)
+        self.assertEqual(r["oos_days"],150)
+        self.assertEqual(r["status"],"EXPLORATORY_ONLY")
+        self.assertEqual(r["folds"][0]["train_end"],bars[119]["time"][:10])
+        self.assertEqual(r["folds"][0]["validation_start"],bars[120]["time"][:10])
+        self.assertEqual(r["folds"][0]["test_start"],bars[170]["time"][:10])
+        self.assertEqual(r["folds"][1]["test_start"],bars[220]["time"][:10])
+        self.assertEqual(r["folds"][2]["test_end"],bars[319]["time"][:10])
+        self.assertEqual(r["totals"]["cash"]["return_pct"],0)
+        self.assertEqual(r["totals"]["cash"]["fees_usd"],0)
+        self.assertGreater(r["totals"]["buyhold"]["fees_usd"],0)
+        self.assertEqual(sum(x["days"] for x in r["totals"]["selected"]["regimes"]),150)
+
+    def test_walkforward_first_selection_ignores_heldout_prices(self):
+        import lab_walkforward as wf
+        original=self.walk_bars()
+        modified=[x.copy() for x in original]
+        for index in range(185,205):
+            modified[index]["close"]*=1.85
+            modified[index]["open"]*=1.7
+        base=wf.calculate(original,"ETH-USD")
+        changed=wf.calculate(modified,"ETH-USD")
+        a=base["folds"][0];b=changed["folds"][0]
+        self.assertEqual(a["selected"],b["selected"])
+        self.assertEqual(a["train_metrics"],b["train_metrics"])
+        self.assertEqual(a["validation_metrics"],b["validation_metrics"])
+        # The intentionally manipulated first held-out period CAN change its return.
+        self.assertNotEqual(a["test_return_pct"],b["test_return_pct"])
+
+    def test_walkforward_no_lookahead_and_unfinished_day_excluded(self):
+        import lab_walkforward as wf
+        bars=self.walk_bars()
+        candidate=[{"time":datetime(2026,10,26,tzinfo=timezone.utc).isoformat(),
+                    "open":999999.0,"close":999999.0}]
+        baseline=wf.calculate(bars,"BTC-USD")
+        with_future=wf.calculate(bars+candidate,"BTC-USD")
+        self.assertEqual(baseline["folds"],with_future["folds"])
+        flat=[{"time":(datetime(2025,1,1,tzinfo=timezone.utc)+timedelta(days=i)).isoformat(),
+               "open":100.0,"close":100.0} for i in range(70)]
+        flat[50]["close"]=500.0
+        first=wf.simulate(flat,50,51,"sma10_30")
+        self.assertEqual(first["trades"],0)
+        self.assertEqual(first["ending_equity"],100.0)
+
+    def test_walkforward_ai_matching_only_same_heldout_observations(self):
+        import lab_walkforward as wf
+        bars=self.walk_bars()
+        day=bars[180]["time"]
+        observations=[
+            {"ticker":"BTC-USD","decision":"AL","observed_at":day,
+             "observed_price":110.0,"h24_return_pct":2.5,"h24_timely":True,
+             "d7_return_pct":-3.0,"d7_timely":True},
+            {"ticker":"BTC-USD","decision":"SAT","observed_at":bars[181]["time"],
+             "observed_price":112.0,"h24_return_pct":-1.0,"h24_timely":True,
+             "d7_return_pct":None,"d7_timely":False},
+            {"ticker":"BTC-USD","decision":"BEKLE","observed_at":day,
+             "observed_price":110.0,"h24_return_pct":1.0,"h24_timely":True},
+            {"ticker":"BTC-USD","decision":"AL","observed_at":bars[190]["time"],
+             "observed_price":110.0,"h24_return_pct":9.0,"h24_timely":False},
+            {"ticker":"ETH-USD","decision":"AL","observed_at":day,
+             "observed_price":110.0,"h24_return_pct":2.5,"h24_timely":True}
+        ]
+        r=wf.calculate(bars,"BTC-USD",observations)
+        h=r["ai_paired"]["horizons"]
+        self.assertEqual(h["h24"]["matched"],2)
+        self.assertEqual(h["h24"]["scores"]["AI"]["correct"],2)
+        self.assertFalse(h["h24"]["adequate_sample"])
+        self.assertEqual(h["d7"]["matched"],1)
+        self.assertGreaterEqual(r["ai_paired"]["exclusions"]["hold_ignored"],1)
+
     def test_backtest_has_one_bar_delay_and_no_network(self):
         start = datetime(2026, 1, 1, tzinfo=timezone.utc)
         bars = []
