@@ -100,12 +100,38 @@ section+section{margin-top:12px}.tag{border:1px solid #3a5169;color:#a9c0df;padd
   <div class="table-wrap"><table><thead><tr><th>Varlık</th><th>Rejim</th><th>Gün</th><th>Birleşik günlük getiri</th><th>Pozitif gün</th></tr></thead><tbody id="walkRegimes"></tbody></table></div>
   <h3>Aşırı uyum ve kararlılık kontrolü</h3>
   <div id="walkWarnings" class="warn"></div>
+  <h3>Strateji seçim istikrarı ve risk denetimi</h3>
+  <div id="walkStability" class="foot"></div>
+  <h3>Kayıpların işlem bazlı açıklaması</h3>
+  <p class="foot">Her sanal işlemin açıldığı günkü rejim, kapanmış/net veya test sonu açık kâr-zararı. Test katlamaları ayrı ayrı 100$ ile başladığından bunlar birleştirilmiş tek portföyün işlem defteri değildir.</p>
+  <div class="table-wrap"><table><thead><tr><th>Varlık</th><th>Katlama</th><th>Giriş rejimi</th><th>Açılış</th><th>Durum</th><th>Net P/L</th></tr></thead><tbody id="walkTradeRows"></tbody></table></div>
   <h3>AI ile aynı gözlem tarihindeki yön karşılaştırması</h3>
   <p id="walkAi" class="foot"></p>
   <div class="table-wrap"><table><thead><tr><th>Varlık</th><th>Ufuk</th><th>Eşleşen gözlem</th><th>AI</th><th>Al-tut yönü</th><th>SMA20/50</th><th>SMA10/30</th></tr></thead><tbody id="walkAiRows"></tbody></table></div>
   <p id="walkMethod" class="foot"></p>
   <p class="warn">Bu geçmiş testin gerçek para için geçerliliği kanıtlanmamıştır. AI ve SMA için yön doğruluğu, işlem getirisi değildir. Veri kaynağındaki geçmiş revizyonlar sonuçları değiştirebilir.</p>
  </div>
+</section>
+<section class="card">
+ <h2>Portföy muhasebe denetimi</h2>
+ <p class="foot">Sanal AL/SAT defterinden nakit, eldeki miktar, maliyet, gerçekleşen/açık kâr-zarar ve komisyon bağımsız yeniden hesaplanır. Veri uyuşmazsa kayda müdahale edilmez.</p>
+ <button id="runLedger" class="secondary">Sanal işlem defterini denetle</button>
+ <p id="ledgerStatus" class="foot">Denetim henüz çalıştırılmadı.</p>
+ <div class="stats">
+  <div class="stat"><div class="k">Deftere göre nakit</div><div class="v" id="ledgerCash">—</div></div>
+  <div class="stat"><div class="k">Gerçekleşen net P/L</div><div class="v" id="ledgerClosed">—</div></div>
+  <div class="stat"><div class="k">Açık pozisyon P/L</div><div class="v" id="ledgerOpen">—</div></div>
+  <div class="stat"><div class="k">Komisyon toplamı</div><div class="v" id="ledgerFees">—</div></div>
+ </div>
+</section>
+<section class="card">
+ <div class="row"><h2>Canlı ileriye dönük sanal test</h2><span class="pill">Günlük kayıt</span></div>
+ <p class="foot">Bugün kaydedilen sinyal son <strong>tamamlanmış günlük kapanışa</strong> dayanır. Yarınki mum kapanmadan sonucu belirlenmez. Bugün kaçırılan kayıt yarın geçmişe dönük oluşturulmaz.</p>
+ <div class="buttons"><button id="forwardRecord" class="primary">BTC + ETH sinyallerini kaydet</button><button id="forwardEvaluate" class="secondary">Sonuçları güncelle</button></div>
+ <p id="forwardMessage" class="foot">Henüz kayıt kontrol edilmedi. Gerçek işlem veya OpenAI çağrısı yapılmaz.</p>
+ <div class="table-wrap"><table><thead><tr><th>Varlık</th><th>Strateji</th><th>Kayıt günü</th><th>Karar</th><th>İlk kapanış</th><th>Ertesi gün</th><th>Fark</th></tr></thead><tbody id="forwardRows"></tbody></table></div>
+ <p id="forwardSummary" class="foot"></p>
+ <p class="foot">Sinyal kaydetme ve sonuç güncelleme butonla yapılır; terminal kapalıyken çalışmaz. NAKİT, SAT/SHORT sinyali değildir. Günlük fiyat verileri sağlayıcı tarafından sonradan revize edilebilir.</p>
 </section>
 </div>
 <div>
@@ -437,6 +463,20 @@ function walkShow(report,symbol){
  }
  const warns=document.createElement('p');warns.textContent=symbol+': '+report.warnings.join(' • ');
  warnings.appendChild(warns);
+ const stability=report.stability_review;
+ if(stability){
+  const line=document.createElement('p');
+  line.textContent=symbol+': '+stability.fold_count+' katlama • strateji değişimi '+stability.switches+
+     ' • pozitif doğrulama / negatif test '+stability.validation_positive_test_negative+
+     ' • negatif OOS dönem '+stability.negative_test_folds+
+     ' • doğrulama-test farkı '+stability.validation_test_gap_pp.join(', ')+' puan'+
+     ' • durum: yalnızca sanal araştırma';
+  $('walkStability').appendChild(line);
+ }
+ for(const tr of (report.trade_attribution?.events||[])){
+  addWalkRow($('walkTradeRows'),[symbol,tr.fold,tr.entry_regime,tr.entry_day,
+    tr.status==='CLOSED'?'Kapanmış':'Test sonu açık',usd(tr.net_pnl_usd,4)]);
+ }
  for(const horizon of ['h24','d7']){
   const h=report.ai_paired.horizons[horizon];
   const shown=(name)=>{
@@ -453,7 +493,7 @@ function walkShow(report,symbol){
 $('walkRun').onclick=async()=>{
  $('walkRun').disabled=true;$('walkResults').hidden=false;
  show('walkStatus','Geçmiş BTC/ETH verileri ve kayıtlı AI gözlemleri değerlendiriliyor...');
- for(const id of ['walkTotals','walkRegimes','walkFolds','walkWarnings','walkAi','walkAiRows','walkMethod'])$(id).replaceChildren();
+ for(const id of ['walkTotals','walkRegimes','walkFolds','walkWarnings','walkAi','walkAiRows','walkMethod','walkTradeRows','walkStability'])$(id).replaceChildren();
  const res=await Promise.allSettled([
   request('/api/walkforward?ticker=BTC-USD'),
   request('/api/walkforward?ticker=ETH-USD')]);
@@ -470,6 +510,51 @@ $('walkRun').onclick=async()=>{
  show('walkStatus',okay+'/2 varlık • yalnızca geçmiş günlük fiyat ve saklanan AI kararları kullanıldı • OpenAI analizi çalıştırılmadı.');
  $('walkRun').disabled=false;
 };
+async function loadForward(){
+ try{
+  const d=await request('/api/forward');
+  const body=$('forwardRows');body.replaceChildren();
+  for(const r of d.records.slice(0,35)){
+   addWalkRow(body,[r.ticker,r.strategy,r.signal_day,r.direction,
+      usd(r.baseline_close),r.target_close===null?'Sonuç bekleniyor':usd(r.target_close),
+      r.movement_pct===null?'—':(r.movement_pct>0?'+':'')+pct(r.movement_pct)]);
+  }
+  show('forwardSummary',d.records.length+' kayıt görüntüleniyor • '+d.disclaimer);
+ }catch(e){show('forwardMessage','Sinyal listesi okunamadı: '+e.message);}
+}
+$('runLedger').onclick=async()=>{
+ $('runLedger').disabled=true;
+ try{
+  const r=await request('/api/ledger-audit');
+  show('ledgerCash',usd(r.ledger_cash));show('ledgerClosed',usd(r.closed_pnl,4));
+  show('ledgerOpen',usd(r.open_pnl,4));show('ledgerFees',usd(r.commission_total,4));
+  show('ledgerStatus',(r.status==='PASS'?'Defter tutarlı':'UYUŞMAZLIK • '+r.errors.join(' | '))+
+    ' • '+r.trade_count+' sanal işlem • '+r.note+
+    (r.missing_quotes.length?' • Fiyatı bulunamayan: '+r.missing_quotes.join(', '):''));
+ }catch(e){show('ledgerStatus','Denetim hatası: '+e.message);}
+ finally{$('runLedger').disabled=false;}
+};
+async function forwardAction(kind){
+ const button=kind==='record'?'forwardRecord':'forwardEvaluate';
+ $(button).disabled=true;
+ show('forwardMessage','BTC ve ETH verileri kontrol ediliyor...');
+ const route=kind==='record'?'/api/forward/record':'/api/forward/evaluate';
+ try{
+  const results=await Promise.allSettled(['BTC-USD','ETH-USD'].map(t=>request(route,{
+   method:'POST',headers:{'Content-Type':'application/json','X-Lab-Action':'1'},
+   body:JSON.stringify({ticker:t})
+  })));
+  show('forwardMessage',results.map((r,i)=>{
+   const name=i===0?'BTC':'ETH';
+   return name+': '+(r.status==='rejected'?'Hata: '+r.reason.message:
+     kind==='record'?'Yeni '+r.value.new+' kayıt, mevcut '+r.value.existing:
+      'Güncellenen '+r.value.updated+' ölçüm');
+  }).join(' • '));
+  await loadForward();
+ }finally{$(button).disabled=false;}
+}
+$('forwardRecord').onclick=()=>forwardAction('record');
+$('forwardEvaluate').onclick=()=>forwardAction('evaluate');
 $('test').onclick=async()=>{
  $('test').disabled=true;show('btStatus','Geçmiş veriler yükleniyor; bu işlem API modeli çağırmaz...');
  try{
@@ -496,7 +581,7 @@ async function select(t){
 }
 $('btc').onclick=()=>select('BTC-USD');$('eth').onclick=()=>select('ETH-USD');
 $('refresh').onclick=()=>Promise.all([loadMarket(),loadSignal(),loadPortfolio(),loadRisk(),loadPerformance(),loadDecisions()]);
-Promise.all([select(ticker),loadPortfolio(),loadRisk(),loadPerformance(),loadDecisions()]);
+Promise.all([select(ticker),loadPortfolio(),loadRisk(),loadPerformance(),loadDecisions(),loadForward()]);
 setInterval(async()=>{
  if(document.visibilityState!=='visible')return;
  await checkVirtualStops();
