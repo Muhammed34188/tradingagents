@@ -77,16 +77,22 @@ section+section{margin-top:12px}.tag{border:1px solid #3a5169;color:#a9c0df;padd
   <div class="stat"><div class="k">Sanal nakit</div><div class="v" id="cash">—</div></div>
   <div class="stat"><div class="k">Toplam kâr/zarar</div><div class="v" id="pnl">—</div></div>
   <div class="stat"><div class="k">Gerçekleşen kâr/zarar</div><div class="v" id="realized">—</div></div>
+  <div class="stat"><div class="k">Açık pozisyon kâr/zararı</div><div class="v" id="unrealized">—</div></div>
+  <div class="stat"><div class="k">Toplam komisyon</div><div class="v" id="fees">—</div></div>
   <div class="stat"><div class="k">Kapalı satışlarda kazanma</div><div class="v" id="win">—</div></div>
   <div class="stat"><div class="k">Maksimum düşüş*</div><div class="v" id="drawdown">—</div></div>
  </div>
+ <h3>Portföy değer grafiği</h3>
+ <svg id="portfolioChart" class="chart" viewBox="0 0 690 210" preserveAspectRatio="none" role="img" aria-label="Sanal portföy değer grafiği"></svg>
+ <p class="foot" id="portfolioChartLabel">Kaydedilen portföy ölçümleri gösterilir.</p>
  <h3>Sanal işlem</h3>
  <label for="action">İşlem yönü</label>
  <select id="action"><option value="BUY">AL (sanal)</option><option value="SELL">SAT (sanal)</option></select>
  <label for="amount">USD tutarı</label>
  <input id="amount" type="number" min="1" max="100" step="1" value="10" autocomplete="off">
+ <button id="prepareSale" class="secondary" style="margin-top:12px;width:100%">BTC'den 5$ sanal satış hazırla</button>
  <button id="paper" class="primary" style="width:100%;margin-top:14px">Sanal işlemi onayla</button>
- <p id="paperStatus" class="foot">Her işlem fiyat verisine göre simüle edilir; gecikme ve %0,1 ücret varsayımı vardır. Gerçek para kullanılmaz.</p>
+ <p id="paperStatus" class="foot">Her işlem fiyat verisine göre simüle edilir; %0,1 komisyon ve %0,05 fiyat kayması varsayımı vardır. Gerçek para kullanılmaz.</p>
  <p class="foot">*Maksimum düşüş yalnızca kaydedilen sanal portföy değerleri üzerinden hesaplanır; tüm piyasa içi dalgalanmaları göstermez.</p>
 </section>
 <section class="card">
@@ -94,7 +100,7 @@ section+section{margin-top:12px}.tag{border:1px solid #3a5169;color:#a9c0df;padd
  <div id="positions" class="foot">Henüz pozisyon yok.</div>
 </section>
 <section class="card">
- <h2>İşlem geçmişi</h2><div class="table-wrap"><table><thead><tr><th>Zaman (UTC)</th><th>Varlık</th><th>Yön</th><th>USD</th><th>Fiyat</th><th>Net kâr</th></tr></thead><tbody id="trades"></tbody></table></div>
+ <h2>İşlem günlüğü</h2><div class="table-wrap"><table><thead><tr><th>Zaman (UTC)</th><th>Varlık</th><th>Yön</th><th>USD</th><th>Fiyat</th><th>Komisyon</th><th>Net kâr</th></tr></thead><tbody id="trades"></tbody></table></div>
  <p id="emptyTrades" class="foot">Henüz sanal işlem yok.</p>
 </section>
 </div></div>
@@ -105,8 +111,8 @@ section+section{margin-top:12px}.tag{border:1px solid #3a5169;color:#a9c0df;padd
 const $=id=>document.getElementById(id);
 let ticker='BTC-USD';
 let orderInFlight=false;
-const usd=(x,n=2)=>Number.isFinite(Number(x))?'$'+Number(x).toLocaleString('en-US',{minimumFractionDigits:n,maximumFractionDigits:n}):'—';
-const pct=(x)=>Number.isFinite(Number(x))?Number(x).toFixed(2)+'%':'—';
+const usd=(x,n=2)=>x!==null&&x!==undefined&&Number.isFinite(Number(x))?'$'+Number(x).toLocaleString('en-US',{minimumFractionDigits:n,maximumFractionDigits:n}):'—';
+const pct=(x)=>x!==null&&x!==undefined&&Number.isFinite(Number(x))?Number(x).toFixed(2)+'%':'—';
 const show=(id,s)=>{ $(id).textContent=s; };
 async function request(path,options={}){
  const r=await fetch(path,{cache:'no-store',...options});
@@ -155,6 +161,11 @@ async function loadPortfolio(){
   const d=await request('/api/portfolio');
   show('equity',usd(d.equity));show('cash',usd(d.cash));show('pnl',usd(d.total_pnl));
   show('realized',usd(d.realized_pnl));show('win',d.win_rate==null?'—':pct(d.win_rate));
+  show('unrealized',usd(d.unrealized_pnl));show('fees',usd(d.fees_paid,4));
+  const curve=(d.curve||[]).filter(p=>Number.isFinite(Number(p.nav)));
+  graph('portfolioChart',curve.map(p=>p.nav));
+  show('portfolioChartLabel',curve.length<2?'Henüz grafik için yeterli ölçüm yok.':
+    curve.length+' kayıtlı ölçüm • Son UTC zamanı: '+curve[curve.length-1].time);
   show('drawdown',pct(d.max_drawdown_pct));
   if(d.unpriced&&d.unpriced.length)show('paperStatus','Fiyat doğrulanamadı ('+d.unpriced.join(', ')+'); portföy değeri hesaplanamıyor.');
   const pos=$('positions');pos.replaceChildren();
@@ -167,7 +178,7 @@ async function loadPortfolio(){
   const tbody=$('trades');tbody.replaceChildren();
   for(const t of d.trades){
    const tr=document.createElement('tr');
-   for(const value of [t.at.slice(5,16).replace('T',' '),t.ticker,t.side==='BUY'?'AL':'SAT',usd(t.amount),usd(t.price),t.side==='SELL'?usd(t.realized):'—']){
+   for(const value of [t.at.slice(5,16).replace('T',' '),t.ticker,t.side==='BUY'?'AL':'SAT',usd(t.amount),usd(t.price),usd(t.fee,4),t.side==='SELL'?usd(t.realized,4):'—']){
     const td=document.createElement('td');td.textContent=value;tr.appendChild(td);
    }
    tbody.appendChild(tr);
@@ -175,6 +186,14 @@ async function loadPortfolio(){
   $('emptyTrades').hidden=!!d.trades.length;
  }catch(err){show('paperStatus','Portföy alınamadı: '+err.message);}
 }
+$('prepareSale').onclick=async()=>{
+ if(orderInFlight)return;
+ await select('BTC-USD');
+ $('action').value='SELL';
+ $('amount').value='5';
+ show('paperStatus','5$ sanal SAT hazırlandı; henüz emir kaydedilmedi. İşlemi ayrı butonla onaylamalısın.');
+ $('amount').scrollIntoView({behavior:'smooth',block:'center'});
+};
 $('paper').onclick=async()=>{
  if(orderInFlight)return;
  const side=$('action').value,amount=Number($('amount').value);
