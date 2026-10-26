@@ -83,6 +83,11 @@ class PaperTradeTests(unittest.TestCase):
         self.assertGreater(report["trade_events"], 0)
         self.assertGreater(report["final_equity"], 100)
         self.assertEqual(len(report["curve"]), 35)
+        self.assertTrue(report["open_position"])
+        self.assertGreater(report["unrealized_pnl"], 0)
+        self.assertEqual(report["closed_trades"], 0)
+        self.assertGreater(report["transaction_fees"], 0)
+        self.assertFalse(report["baseline_fee_included"])
 
 
 if __name__ == "__main__":
