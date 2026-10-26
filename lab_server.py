@@ -12,6 +12,8 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from urllib.parse import parse_qs, urlsplit
 import lab_terminal
+import lab_risk
+import sqlite3
 
 PASSWORD = os.environ.get("LAB_PASSWORD", "")
 if not PASSWORD:
@@ -275,6 +277,11 @@ def worker(ticker, day):
             if code == 0 and created:
                 with LOCK:
                     STATE["report_file"] = str(created)
+                try:
+                    outcome=lab_risk.observe_report(ticker,created.parent,DATA)
+                    print("AI signal log: stored="+str(outcome.get("recorded")),flush=True)
+                except (ValueError,RuntimeError,OSError,sqlite3.Error) as exc:
+                    print("AI signal log unavailable: "+type(exc).__name__,flush=True)
                 detail = "Analiz tamamlandı. Tam raporu açabilirsiniz."
             elif code == 0:
                 detail = ("Analiz işlemi bitti ancak rapor dosyası oluşmadı. "
@@ -327,6 +334,18 @@ class Handler(BaseHTTPRequestHandler):
             path = Path(__file__).with_name("lab_terminal.html")
             return self.reply(200, path.read_bytes(), "text/html", {
                 "Content-Security-Policy": "default-src 'self'; script-src 'unsafe-inline'; style-src 'unsafe-inline'; connect-src 'self'; base-uri 'none'; frame-ancestors 'none'"})
+        if route.path in ("/api/risk", "/api/performance", "/api/decisions"):
+            try:
+                if route.path == "/api/risk":
+                    value=lab_risk.risk_dashboard()
+                elif route.path == "/api/performance":
+                    value=lab_risk.performance()
+                else:
+                    value=lab_risk.decision_history(DATA)
+                return self.json_reply(200,value)
+            except (ValueError,OSError,RuntimeError,sqlite3.Error) as exc:
+                print("Dashboard GET issue: "+type(exc).__name__,flush=True)
+                return self.json_reply(503,{"error":"Kayıtlı veriler şu anda okunamıyor."})
         if route.path in ("/api/market", "/api/portfolio", "/api/ai-signal", "/api/backtest"):
             q = parse_qs(route.query)
             try:
@@ -375,6 +394,23 @@ class Handler(BaseHTTPRequestHandler):
     def do_POST(self):
         if not self.verify():
             return
+        if urlsplit(self.path).path in ("/api/risk/stop","/api/risk/check"):
+            if self.headers.get("X-Lab-Action") != "1" or not self.headers.get("Content-Type","").startswith("application/json"):
+                return self.json_reply(403,{"error":"Güvenlik kontrolü başarısız."})
+            try:
+                size=int(self.headers.get("Content-Length","0"))
+                if size<2 or size>512: raise ValueError("İstek boyutu geçersiz.")
+                payload=json.loads(self.rfile.read(size))
+                if urlsplit(self.path).path == "/api/risk/stop":
+                    value=lab_risk.stop_control(payload.get("ticker"),payload.get("pct",5))
+                else:
+                    value=lab_risk.check_stops()
+                return self.json_reply(200,value)
+            except (ValueError,TypeError,KeyError,json.JSONDecodeError) as exc:
+                return self.json_reply(422,{"error":str(exc)})
+            except (OSError,RuntimeError,sqlite3.Error) as exc:
+                print("Risk action error: "+type(exc).__name__,flush=True)
+                return self.json_reply(503,{"error":"Sanal risk servisine erişilemiyor."})
         if urlsplit(self.path).path == "/api/paper/order":
             if self.headers.get("X-Lab-Action") != "1" or not self.headers.get("Content-Type", "").startswith("application/json"):
                 return self.json_reply(403, {"error": "Güvenlik kontrolü başarısız."})
