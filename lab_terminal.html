@@ -1,0 +1,209 @@
+<!doctype html>
+<html lang="tr"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<meta name="theme-color" content="#09111e"><title>TradingAgents • Terminal</title>
+<style>
+:root{color-scheme:dark;background:#080f1d;color:#e9f2ff;font:14px/1.5 ui-sans-serif,system-ui,-apple-system,Segoe UI,Arial}
+*{box-sizing:border-box}body{margin:0;background:radial-gradient(1000px 430px at 8% -10%,#10434477,transparent),#080f1d}
+main{max-width:1040px;margin:auto;padding:19px 15px 54px}header{display:flex;align-items:center;justify-content:space-between;gap:10px;padding:12px 0 21px}
+.brand{font-size:22px;font-weight:850;letter-spacing:-.4px}.brand i{font-style:normal;color:#57efb9}
+header a{color:#b0bed6;text-decoration:none;font-weight:600}.sub{color:#9aaac4;font-size:12px}
+.columns{display:grid;grid-template-columns:minmax(0,1.5fr) minmax(0,1fr);gap:14px}.card{background:#111d2f;border:1px solid #2c3c53;border-radius:17px;padding:19px;margin:0 0 14px;min-width:0}
+.row{display:flex;justify-content:space-between;align-items:center;gap:10px;flex-wrap:wrap}.muted{color:#97abc5}.small{font-size:12px}
+h2{margin:0 0 15px;font-size:17px}h3{font-size:13px;margin:14px 0 8px;color:#b7c5de}strong.number{font-size:29px;letter-spacing:-.9px}
+.pill{display:inline-block;border:1px solid #406277;color:#68e3ba;background:#133a39;padding:4px 10px;border-radius:10px;font-size:12px;font-weight:700}
+button,select,input{font:inherit}button{border-radius:10px;padding:11px 13px;cursor:pointer;border:1px solid #3b4f67;background:#192a3d;color:#eaf3ff;font-weight:700}
+button.primary{background:#56e0ac;color:#05251a;border-color:#56e0ac}button.secondary{background:#0d1a2b}button:disabled{opacity:.5;cursor:not-allowed}
+.buttons{display:flex;gap:8px}select,input{width:100%;padding:12px;border-radius:10px;background:#091628;border:1px solid #33465f;color:#f1f7ff;font-size:16px}
+label{font-size:12px;color:#aabbd3;display:block;margin:12px 0 6px}
+.stats{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:9px}.stat{border:1px solid #293a51;background:#0b1728;padding:12px;border-radius:12px}
+.stat .v{font-size:20px;font-weight:800}.stat .k{font-size:11px;color:#97aac3}
+.chart{width:100%;height:210px;display:block;background:linear-gradient(180deg,#14253b 0%,#0d192a 100%);border-radius:12px}
+.foot{color:#92a7c3;font-size:12px;line-height:1.6}.warn{border-left:3px solid #cfa65a;background:#272531;padding:10px 12px;border-radius:3px;font-size:12px;color:#e0d9ca}
+.banner{margin:0 0 15px;border:1px solid #28594c;background:#102923;padding:12px;border-radius:12px;color:#acf9d4;font-weight:600;font-size:12px}
+.bad{color:#ffb3b3}.good{color:#64e6bb}.table-wrap{overflow:auto}table{width:100%;border-collapse:collapse;min-width:350px;font-size:12px}th{text-align:left;color:#90a3be;font-weight:600;padding:10px 6px;border-bottom:1px solid #35475e}td{padding:9px 6px;border-bottom:1px solid #23344a;white-space:nowrap}
+section+section{margin-top:12px}.tag{border:1px solid #3a5169;color:#a9c0df;padding:3px 9px;border-radius:8px}
+@media(max-width:760px){.columns{grid-template-columns:1fr}.card{padding:17px}.brand{font-size:20px}main{padding:14px 12px 35px}.stats{grid-template-columns:repeat(2,minmax(0,1fr))}}
+</style></head><body>
+<main>
+<header><div><div class="brand">◈ TradingAgents <i>Terminal</i></div><div class="sub">Piyasa araştırması • Simülasyon • Strateji testleri</div></div><a href="/">← Analizler</a></header>
+<div class="banner">Sanal test modu açık • Gerçek emir, kaldıraç veya otomatik işlem YOK • Fiyatlar gecikmeli olabilir.</div>
+<div class="columns">
+<div>
+<section class="card">
+ <div class="row"><h2>BTC / ETH piyasası</h2><span class="pill">Yahoo • gecikmeli</span></div>
+ <div class="buttons" style="margin-bottom:15px">
+ <button id="btc" class="primary">BTC / USD</button><button id="eth">ETH / USD</button>
+ <button id="refresh" style="margin-left:auto">Yenile</button>
+ </div>
+ <div class="row"><strong class="number" id="price">—</strong><span id="delta" class="tag">—</span></div>
+ <div class="sub" id="source">Fiyat verisi bekleniyor...</div>
+ <svg id="chart" class="chart" viewBox="0 0 690 210" preserveAspectRatio="none" role="img" aria-label="Gecikmeli fiyat grafiği"></svg>
+ <div class="foot" style="margin-top:9px">Gösterge niteliğindedir; emir fiyatı değildir. Grafik otomatik olarak yaklaşık 90 saniyede yenilenir.</div>
+</section>
+<section class="card">
+ <div class="row"><h2>Yapay zekâ analiz kararı</h2><span class="pill">Rapordan</span></div>
+ <div class="row"><strong id="signal" class="number">—</strong><span id="rating" class="tag">—</span></div>
+ <p id="signalNote" class="foot">Son kayıtlı TradingAgents raporu aranıyor...</p>
+ <a id="signalLink" href="/" style="color:#66e7b5">Analiz raporuna dön</a>
+</section>
+<section class="card">
+ <div class="row"><h2>Geçmişe dönük strateji testi</h2><span class="tag">SMA20 / SMA50</span></div>
+ <p class="foot">Yaklaşık son 1 yılın günlük BTC/ETH verileri; önceki günün sinyali sonraki gün açılışında uygulanır. 100$ başlangıç, komisyon ve varsayımsal fiyat kayması dahildir.</p>
+ <button id="test" class="primary">Geriye dönük testi çalıştır</button>
+ <p id="btStatus" class="foot">Test henüz çalıştırılmadı. Yapay zekâ API ücretine neden olmaz.</p>
+ <div id="btResults" hidden>
+   <div class="stats">
+     <div class="stat"><div class="k">Strateji getirisi</div><div class="v" id="btReturn">—</div></div>
+     <div class="stat"><div class="k">Al-tut getirisi</div><div class="v" id="btHold">—</div></div>
+     <div class="stat"><div class="k">Maksimum düşüş</div><div class="v" id="btDD">—</div></div>
+     <div class="stat"><div class="k">Kapanmış işlem kazanma oranı</div><div class="v" id="btWin">—</div></div>
+   </div>
+   <h3>Geçmiş sanal özsermaye eğrisi</h3>
+   <svg id="btChart" class="chart" viewBox="0 0 690 210" preserveAspectRatio="none" role="img" aria-label="Backtest değer eğrisi"></svg>
+   <p class="foot" id="btMethod"></p>
+ </div>
+</section>
+</div>
+<div>
+<section class="card">
+ <div class="row"><h2>100$ sanal portföy</h2><span class="pill">PAPER</span></div>
+ <div class="stats">
+  <div class="stat"><div class="k">Toplam değer</div><div class="v" id="equity">—</div></div>
+  <div class="stat"><div class="k">Sanal nakit</div><div class="v" id="cash">—</div></div>
+  <div class="stat"><div class="k">Toplam kâr/zarar</div><div class="v" id="pnl">—</div></div>
+  <div class="stat"><div class="k">Gerçekleşen kâr/zarar</div><div class="v" id="realized">—</div></div>
+  <div class="stat"><div class="k">Kapalı satışlarda kazanma</div><div class="v" id="win">—</div></div>
+  <div class="stat"><div class="k">Maksimum düşüş*</div><div class="v" id="drawdown">—</div></div>
+ </div>
+ <h3>Sanal işlem</h3>
+ <label for="action">İşlem yönü</label>
+ <select id="action"><option value="BUY">AL (sanal)</option><option value="SELL">SAT (sanal)</option></select>
+ <label for="amount">USD tutarı</label>
+ <input id="amount" type="number" min="1" max="100" step="1" value="10" autocomplete="off">
+ <button id="paper" class="primary" style="width:100%;margin-top:14px">Sanal işlemi onayla</button>
+ <p id="paperStatus" class="foot">Her işlem fiyat verisine göre simüle edilir; gecikme ve %0,1 ücret varsayımı vardır. Gerçek para kullanılmaz.</p>
+ <p class="foot">*Maksimum düşüş yalnızca kaydedilen sanal portföy değerleri üzerinden hesaplanır; tüm piyasa içi dalgalanmaları göstermez.</p>
+</section>
+<section class="card">
+ <h2>Sanal varlıklar</h2>
+ <div id="positions" class="foot">Henüz pozisyon yok.</div>
+</section>
+<section class="card">
+ <h2>İşlem geçmişi</h2><div class="table-wrap"><table><thead><tr><th>Zaman (UTC)</th><th>Varlık</th><th>Yön</th><th>USD</th><th>Fiyat</th><th>Net kâr</th></tr></thead><tbody id="trades"></tbody></table></div>
+ <p id="emptyTrades" class="foot">Henüz sanal işlem yok.</p>
+</section>
+</div></div>
+<p class="warn">TradingAgents kararları, Yahoo fiyatları ve SMA geçmiş testleri finansal tavsiye değildir. Geçmiş test sonucu gelecekteki getiriyi öngörmez. Bu terminal gerçek bir borsaya bağlı değildir.</p>
+</main>
+<script>
+'use strict';
+const $=id=>document.getElementById(id);
+let ticker='BTC-USD';
+let orderInFlight=false;
+const usd=(x,n=2)=>Number.isFinite(Number(x))?'$'+Number(x).toLocaleString('en-US',{minimumFractionDigits:n,maximumFractionDigits:n}):'—';
+const pct=(x)=>Number.isFinite(Number(x))?Number(x).toFixed(2)+'%':'—';
+const show=(id,s)=>{ $(id).textContent=s; };
+async function request(path,options={}){
+ const r=await fetch(path,{cache:'no-store',...options});
+ let payload;
+ try{payload=await r.json();}catch{throw Error('Sunucu hatası: '+r.status)}
+ if(!r.ok)throw Error(payload.error||'Servis yanıt vermedi');
+ return payload;
+}
+function graph(id,values){
+ const node=$(id); node.replaceChildren();
+ const nums=values.map(Number).filter(Number.isFinite);
+ if(nums.length<2)return;
+ let lo=Math.min(...nums),hi=Math.max(...nums);
+ if(hi===lo){hi+=1;lo-=1}
+ const pad=(hi-lo)*.08;hi+=pad;lo-=pad;
+ const xy=nums.map((n,i)=>(18+i*(654/(nums.length-1))).toFixed(1)+','+(190-(n-lo)/(hi-lo)*170).toFixed(1)).join(' ');
+ const NS='http://www.w3.org/2000/svg';
+ const p=document.createElementNS(NS,'polyline');
+ p.setAttribute('points',xy);p.setAttribute('fill','none');p.setAttribute('stroke','#59dfb1');
+ p.setAttribute('stroke-width','3');p.setAttribute('stroke-linejoin','round');p.setAttribute('stroke-linecap','round');
+ node.appendChild(p);
+}
+async function loadMarket(){
+ show('source','Fiyat kaynağına bağlanıyor...');
+ try {
+  const data=await request('/api/market?ticker='+encodeURIComponent(ticker));
+  if(data.ticker!==ticker)return;
+  show('price',usd(data.price));
+  show('delta',(data.change_pct>0?'+':'')+pct(data.change_pct)+' / gösterilen dönem');
+  show('source',data.source+' • UTC: '+data.as_of+' • '+(data.fresh?'Son veri mevcut':'Veri eskimiş, sanal işlem kapalı'));
+  graph('chart',data.chart.map(x=>x.price));
+ }catch(err){show('source',err.message);show('price','—');show('delta','—');graph('chart',[]);}
+}
+async function loadSignal(){
+ try {
+ const d=await request('/api/ai-signal?ticker='+encodeURIComponent(ticker));
+ show('signal',d.signal||'BELİRSİZ');
+ show('rating',d.rating||'Rapor yok');
+ show('signalNote',d.note||d.message||'Bu sinyal işlem emri değildir.');
+ $('signalLink').href=d.report_id?'/report?id='+encodeURIComponent(d.report_id):'/';
+ $('signalLink').textContent=d.report_id?'Kaynak raporu aç':'Analiz ekranına dön';
+ }catch(err){show('signal','—');show('signalNote',err.message)}
+}
+async function loadPortfolio(){
+ try{
+  const d=await request('/api/portfolio');
+  show('equity',usd(d.equity));show('cash',usd(d.cash));show('pnl',usd(d.total_pnl));
+  show('realized',usd(d.realized_pnl));show('win',d.win_rate==null?'—':pct(d.win_rate));
+  show('drawdown',pct(d.max_drawdown_pct));
+  if(d.unpriced&&d.unpriced.length)show('paperStatus','Fiyat doğrulanamadı ('+d.unpriced.join(', ')+'); portföy değeri hesaplanamıyor.');
+  const pos=$('positions');pos.replaceChildren();
+  if(!d.positions.length)pos.textContent='Henüz açık pozisyon yok.';
+  for(const p of d.positions) {
+   const line=document.createElement('p');
+   line.textContent=p.ticker+' • '+Number(p.qty).toFixed(7)+' adet • '+usd(p.value)+' • Ortalama: '+usd(p.avg_cost);
+   pos.appendChild(line);
+  }
+  const tbody=$('trades');tbody.replaceChildren();
+  for(const t of d.trades){
+   const tr=document.createElement('tr');
+   for(const value of [t.at.slice(5,16).replace('T',' '),t.ticker,t.side==='BUY'?'AL':'SAT',usd(t.amount),usd(t.price),t.side==='SELL'?usd(t.realized):'—']){
+    const td=document.createElement('td');td.textContent=value;tr.appendChild(td);
+   }
+   tbody.appendChild(tr);
+  }
+  $('emptyTrades').hidden=!!d.trades.length;
+ }catch(err){show('paperStatus','Portföy alınamadı: '+err.message);}
+}
+$('paper').onclick=async()=>{
+ if(orderInFlight)return;
+ const side=$('action').value,amount=Number($('amount').value);
+ if(!Number.isFinite(amount)||amount<1||amount>10000){alert('En az 1 USD geçerli sanal tutar gir.');return}
+ if(!confirm(ticker+' için '+usd(amount)+' '+(side==='BUY'?'Sanal AL':'Sanal SAT')+' işlemi kaydedilsin mi? Gerçek emir gitmeyecek.'))return;
+ orderInFlight=true;$('paper').disabled=true;show('paperStatus','Sanal işlem kaydediliyor...');
+ try{
+  const d=await request('/api/paper/order',{method:'POST',headers:{'Content-Type':'application/json','X-Lab-Action':'1'},body:JSON.stringify({ticker,side,amount})});
+  show('paperStatus','Sanal işlem kaydedildi: '+d.side+' '+d.ticker+' • '+usd(d.filled_usd)+' • Fiyat '+usd(d.price));
+  await loadPortfolio();
+ }catch(err){show('paperStatus','İşlem gerçekleşmedi: '+err.message)}
+ finally{orderInFlight=false;$('paper').disabled=false}
+};
+$('test').onclick=async()=>{
+ $('test').disabled=true;show('btStatus','Geçmiş veriler yükleniyor; bu işlem API modeli çağırmaz...');
+ try{
+  const d=await request('/api/backtest?ticker='+encodeURIComponent(ticker));
+  $('btResults').hidden=false;
+  show('btReturn',pct(d.return_pct));show('btHold',pct(d.buy_hold_pct));
+  show('btDD',pct(d.max_drawdown_pct));
+  show('btWin',d.win_rate==null?'—':pct(d.win_rate));
+  show('btMethod',d.start+' — '+d.end+' • '+d.method);
+  show('btStatus',d.strategy+' • '+d.trade_events+' al/sat olayı • '+d.closed_trades+' kapanan işlem');
+  graph('btChart',d.curve.map(x=>x.value));
+ }catch(err){show('btStatus','Backtest hatası: '+err.message);$('btResults').hidden=true;}
+ finally{$('test').disabled=false}
+};
+async function select(t){
+ ticker=t; $('btc').className=t==='BTC-USD'?'primary':''; $('eth').className=t==='ETH-USD'?'primary':'';
+ $('btResults').hidden=true;show('btStatus','Bu varlık için geçmiş test henüz çalıştırılmadı.');
+ await Promise.all([loadMarket(),loadSignal()]);
+}
+$('btc').onclick=()=>select('BTC-USD');$('eth').onclick=()=>select('ETH-USD');
+$('refresh').onclick=()=>Promise.all([loadMarket(),loadSignal(),loadPortfolio()]);
+Promise.all([select(ticker),loadPortfolio()]);
+setInterval(()=>{loadMarket();loadPortfolio()},90000);
+</script></body></html>
