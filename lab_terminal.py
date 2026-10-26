@@ -187,6 +187,8 @@ def paper_order(payload):
             if side=="BUY":
                 if amount > acc["cash"] + 1e-7:
                     raise ValueError("Sanal nakit yetersiz.")
+                import lab_risk
+                lab_risk.validate_buy(db,ticker,amount,qty0,px)
                 fee=amount*COMMISSION/(1+COMMISSION)
                 spend=amount-fee
                 qty=spend/px
@@ -211,6 +213,11 @@ def paper_order(payload):
                        (ticker,newqty,newavg))
             db.execute("INSERT INTO trades(at,ticker,side,qty,price,fee,realized,amount) VALUES(?,?,?,?,?,?,?,?)",
                        (at,ticker,side,qty,px,fee,realized,amount))
+            import lab_risk
+            if side=="BUY":
+                lab_risk.arm_after_buy(db,ticker,px)
+            else:
+                lab_risk.clear_if_closed(db,ticker,newqty)
             db.execute("COMMIT")
             try:
                 portfolio(mark_prices={ticker:quoted_price},record_trade=True)
