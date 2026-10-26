@@ -68,6 +68,23 @@ section+section{margin-top:12px}.tag{border:1px solid #3a5169;color:#a9c0df;padd
    <p class="foot" id="btMethod"></p>
  </div>
 </section>
+<section class="card">
+ <div class="row"><h2>Strateji karşılaştırma laboratuvarı</h2><span class="pill">Sanal geçmiş test</span></div>
+ <p class="foot">BTC ve ETH için aynı günlerden başlayan 4 sabit yaklaşım: <strong>Nakit</strong>, <strong>Al-tut</strong>, <strong>SMA20/50</strong> ve <strong>SMA10/30</strong>. Hepsi 100$ başlangıçlıdır; işlem yapanlarda aynı komisyon ve kayma hesaplanır.</p>
+ <button id="compare" class="primary">BTC + ETH karşılaştırmasını çalıştır</button>
+ <p id="comparisonStatus" class="foot">Henüz karşılaştırma çalıştırılmadı. OpenAI API çağrısı yapılmaz.</p>
+ <div id="comparisonResults" hidden>
+  <h3>Bitcoin — BTC/USD</h3>
+  <p id="compareBtcInfo" class="foot"></p>
+  <div class="table-wrap"><table><thead><tr><th>Strateji</th><th>Getiri</th><th>Max. düşüş</th><th>İşlem</th><th>Komisyon</th></tr></thead><tbody id="compareBtcRows"></tbody></table></div>
+  <h3>Ethereum — ETH/USD</h3>
+  <p id="compareEthInfo" class="foot"></p>
+  <div class="table-wrap"><table><thead><tr><th>Strateji</th><th>Getiri</th><th>Max. düşüş</th><th>İşlem</th><th>Komisyon</th></tr></thead><tbody id="compareEthRows"></tbody></table></div>
+  <p class="warn" id="compareMethod">Bu sonuç geçmiş günlük barlardan türetilir. En yüksek getiri gelecekte başarı anlamına gelmez.</p>
+  <h3>Yapay zekâ karşılaştırma durumu</h3>
+  <p class="foot" id="compareAi">AI karar kayıtları kontrol ediliyor...</p>
+ </div>
+</section>
 </div>
 <div>
 <section class="card">
@@ -318,6 +335,51 @@ $('paper').onclick=async()=>{
   await loadPortfolio();
  }catch(err){show('paperStatus','İşlem gerçekleşmedi: '+err.message)}
  finally{orderInFlight=false;$('paper').disabled=false}
+};
+function fillComparison(result,prefix){
+ const rows=$(prefix+'Rows');rows.replaceChildren();
+ show(prefix+'Info',result.comparison_start+' – '+result.comparison_end+
+   ' • '+result.observations+' ortak işlem günü • İlk 50 bar öğrenme dönemi');
+ for(const v of result.models){
+  const tr=document.createElement('tr');
+  for(const value of [v.name,(v.return_pct>0?'+':'')+pct(v.return_pct),
+      pct(v.max_drawdown_pct),String(v.trades),usd(v.fees_usd,4)]){
+   const td=document.createElement('td');td.textContent=value;tr.appendChild(td);
+  }
+  rows.appendChild(tr);
+ }
+}
+$('compare').onclick=async()=>{
+ $('compare').disabled=true;$('comparisonResults').hidden=false;
+ show('comparisonStatus','BTC ve ETH tarihsel verileri karşılaştırılıyor...');
+ const [btc,eth,ai]=await Promise.allSettled([
+  request('/api/compare?ticker=BTC-USD'),
+  request('/api/compare?ticker=ETH-USD'),
+  request('/api/decisions')
+ ]);
+ let available=0;
+ for(const [result,key] of [[btc,'compareBtc'],[eth,'compareEth']]){
+  if(result.status==='fulfilled'){fillComparison(result.value,key);available++;}
+  else{show(key+'Info','Veri alınamadı: '+result.reason.message);$(key+'Rows').replaceChildren();}
+ }
+ if(btc.status==='fulfilled')show('compareMethod',btc.value.method+' • '+btc.value.limitations);
+ if(ai.status==='fulfilled'){
+   const summaries=ai.value.summary||{};
+   const h=summaries.h24||{},w=summaries.d7||{};
+   const fmt=(o,name)=>{
+     const n=Number(o.evaluated)||0;
+     return name+': '+(n?((o.correct||0)+'/'+n+' isabet ('+pct(o.accuracy_pct)+')'):'henüz güvenilir AL/SAT gözlemi yok');
+   };
+   const n=Number(h.evaluated)||0;
+   const m=Number(w.evaluated)||0;
+   show('compareAi',fmt(h,'24 saat')+' • '+fmt(w,'7 gün')+
+    '. '+((n>=20&&m>=20)?
+    'Yeterli sayıda ilk ölçüm mevcut; bunlar hâlâ işlem stratejisi getirisiyle aynı ölçü değildir.':
+    'AI ile stratejileri performans açısından karşılaştırmak için her ufukta en az 20 ölçülmüş AL/SAT tahmini hedefliyoruz. Şimdilik güvenilir AI sıralaması YOK.')+
+    ' Eski BEKLE kararı puanlanmaz; geçmişte olmayan fiyat eklenmez.');
+ }else show('compareAi','AI gözlemleri alınamadı; backtest sonuçları AI isabeti yerine geçmez.');
+ show('comparisonStatus',available+'/2 varlık için karşılaştırma tamamlandı. Bağımsız AI analiz ücreti oluşmadı.');
+ $('compare').disabled=false;
 };
 $('test').onclick=async()=>{
  $('test').disabled=true;show('btStatus','Geçmiş veriler yükleniyor; bu işlem API modeli çağırmaz...');
