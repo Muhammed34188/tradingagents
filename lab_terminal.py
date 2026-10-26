@@ -261,6 +261,8 @@ def backtest(ticker):
     closed=0
     wins=0
     trades=0
+    total_fees=0.0
+    closed_pnl=0.0
     curve=[]
     # Signal uses only the completed PRIOR trading day, executed at the next bar OPEN.
     # This prevents using the current close to trade at that same close.
@@ -272,12 +274,16 @@ def backtest(ticker):
         if target_long and qty<=0 and cash>0:
             fill=op*(1+SLIPPAGE)
             qty=(cash/(1+COMMISSION))/fill
+            buy_fee=cash-(qty*fill)
+            total_fees+=buy_fee
             cost=cash
             cash=0.0
             trades+=1
         elif not target_long and qty>0:
             fill=op*(1-SLIPPAGE)
             proceeds=qty*fill*(1-COMMISSION)
+            total_fees+=qty*fill*COMMISSION
+            closed_pnl+=proceeds-cost
             cash+=proceeds
             closed+=1
             if proceeds>cost:
@@ -290,8 +296,24 @@ def backtest(ticker):
         dd=min(dd,100*(eq/peak-1))
         curve.append({"date":bars[i]["time"][:10],"value":round(eq,3)})
     final=cash+qty*closes[-1]
+    open_value=qty*closes[-1] if qty>0 else 0.0
+    unrealized=open_value-cost if qty>0 else 0.0
+    # The comparison uses price-only buy-and-hold, without any trading cost.
+    # It is intentionally labeled differently from the fee-adjusted SMA strategy.
     return {
         "ticker":ticker,"strategy":"SMA20 > SMA50 → LONG, aksi → nakit",
+        "open_position":bool(qty>0),"open_value":round(open_value,3),
+        "unrealized_pnl":round(unrealized,3),
+        "closed_pnl":round(closed_pnl,3),
+        "transaction_fees":round(total_fees,4),
+        "baseline_fee_included":False,
+        "alpha_pp":round((final/100-1)*100-(closes[-1]/closes[49]-1)*100,2),
+        "risk_alert":(
+            "Bu örnekte %20'nin üzerinde maksimum düşüş var. "
+            "Sanal stratejinin canlı işlem için uygunluğu kanıtlanmadı."
+            if dd <= -20 else
+            "Bu sonuç tek dönemlik tarihsel simülasyondur; gerçek yatırım kararına uygunluk göstermez."
+        ),
         "return_pct":round((final/100-1)*100,2),
         "buy_hold_pct":round((closes[-1]/closes[49]-1)*100,2),
         "final_equity":round(final,3),
@@ -300,5 +322,5 @@ def backtest(ticker):
         "trade_events":trades,
         "start":bars[50]["time"][:10],"end":bars[-1]["time"][:10],
         "curve":curve[::max(1,len(curve)//180)],
-        "method":"Yalnızca geçmiş günlük OHLC. Önceki günün SMA20/SMA50 sinyali, sonraki gün açılışında işlem. 0,1% komisyon + 0,05% kayma/işlem. Vergi, fonlama ve spreadin tamamı dahil değildir. Gelecek performansı göstermez."
+        "method":"Yalnızca geçmiş günlük OHLC. Önceki günün SMA20/SMA50 sinyali, sonraki gün açılışında işlem. Stratejiye işlem başına %0,1 komisyon ve %0,05 kayma dahil. Al-tut karşılaştırmasına komisyon/kayma dahil değildir. Vergi, fonlama ve tüm piyasa spreadi dahil değildir. Bu test yapay zekâ ajanlarının tarihsel kararlarını ölçmez; gelecek performansı göstermez."
     }
