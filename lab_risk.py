@@ -217,6 +217,20 @@ def observe_report(ticker, folder, root):
 
 def decision_history(root, check_due=True):
     """Only future observations are evaluated. No false reconstructed historical quotes."""
+    # Existing reports predate this telemetry system. Archive their decision,
+    # but NEVER assign a newly discovered price to the historical report date.
+    for ticker in base.ASSETS:
+        latest=base.signal(root,ticker)
+        report_id=latest.get("report_id")
+        if report_id and latest.get("signal") in ("AL","SAT","BEKLE"):
+            with base.MUTEX:
+                with base.connect() as db:
+                    setup(db)
+                    db.execute("""INSERT OR IGNORE INTO ai_observations(
+                        report_id,ticker,decision,report_date,observed_at,observed_price,price_source)
+                        VALUES(?,?,?,?,NULL,NULL,?)""",
+                        (report_id,ticker,latest["signal"],latest["date"],
+                         "Archived decision (historical quote was not captured)"))
     with base.MUTEX:
         with base.connect() as db:
             setup(db)
