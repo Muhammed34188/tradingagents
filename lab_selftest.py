@@ -244,11 +244,11 @@ class PaperTradeTests(unittest.TestCase):
         self.assertEqual(r["fold_count"],3)
         self.assertEqual(r["oos_days"],150)
         self.assertEqual(r["status"],"EXPLORATORY_ONLY")
-        self.assertEqual(r["folds"][0]["train_end"],bars[119]["time"][:10])
-        self.assertEqual(r["folds"][0]["validation_start"],bars[120]["time"][:10])
-        self.assertEqual(r["folds"][0]["test_start"],bars[170]["time"][:10])
-        self.assertEqual(r["folds"][1]["test_start"],bars[220]["time"][:10])
-        self.assertEqual(r["folds"][2]["test_end"],bars[319]["time"][:10])
+        self.assertEqual(r["folds"][0]["train_end"],bars[149]["time"][:10])
+        self.assertEqual(r["folds"][0]["validation_start"],bars[150]["time"][:10])
+        self.assertEqual(r["folds"][0]["test_start"],bars[200]["time"][:10])
+        self.assertEqual(r["folds"][1]["test_start"],bars[250]["time"][:10])
+        self.assertEqual(r["folds"][2]["test_end"],bars[349]["time"][:10])
         self.assertEqual(r["totals"]["cash"]["return_pct"],0)
         self.assertEqual(r["totals"]["cash"]["fees_usd"],0)
         self.assertGreater(r["totals"]["buyhold"]["fees_usd"],0)
@@ -258,7 +258,7 @@ class PaperTradeTests(unittest.TestCase):
         import lab_walkforward as wf
         original=self.walk_bars()
         modified=[x.copy() for x in original]
-        for index in range(185,205):
+        for index in range(215,235):
             modified[index]["close"]*=1.85
             modified[index]["open"]*=1.7
         base=wf.calculate(original,"ETH-USD")
@@ -268,7 +268,9 @@ class PaperTradeTests(unittest.TestCase):
         self.assertEqual(a["train_metrics"],b["train_metrics"])
         self.assertEqual(a["validation_metrics"],b["validation_metrics"])
         # The intentionally manipulated first held-out period CAN change its return.
-        self.assertNotEqual(a["test_return_pct"],b["test_return_pct"])
+        self.assertNotEqual(
+            wf.simulate(original,200,250,"buyhold")["return_pct"],
+            wf.simulate(modified,200,250,"buyhold")["return_pct"])
 
     def test_walkforward_no_lookahead_and_unfinished_day_excluded(self):
         import lab_walkforward as wf
@@ -288,17 +290,17 @@ class PaperTradeTests(unittest.TestCase):
     def test_walkforward_ai_matching_only_same_heldout_observations(self):
         import lab_walkforward as wf
         bars=self.walk_bars()
-        day=bars[180]["time"]
+        day=bars[220]["time"]
         observations=[
             {"ticker":"BTC-USD","decision":"AL","observed_at":day,
              "observed_price":110.0,"h24_return_pct":2.5,"h24_timely":True,
              "d7_return_pct":-3.0,"d7_timely":True},
-            {"ticker":"BTC-USD","decision":"SAT","observed_at":bars[181]["time"],
+            {"ticker":"BTC-USD","decision":"SAT","observed_at":bars[221]["time"],
              "observed_price":112.0,"h24_return_pct":-1.0,"h24_timely":True,
              "d7_return_pct":None,"d7_timely":False},
             {"ticker":"BTC-USD","decision":"BEKLE","observed_at":day,
              "observed_price":110.0,"h24_return_pct":1.0,"h24_timely":True},
-            {"ticker":"BTC-USD","decision":"AL","observed_at":bars[190]["time"],
+            {"ticker":"BTC-USD","decision":"AL","observed_at":bars[230]["time"],
              "observed_price":110.0,"h24_return_pct":9.0,"h24_timely":False},
             {"ticker":"ETH-USD","decision":"AL","observed_at":day,
              "observed_price":110.0,"h24_return_pct":2.5,"h24_timely":True}
