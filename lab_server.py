@@ -152,7 +152,7 @@ def newest_report(ticker, since_ns):
     ]
     return max(matches, key=lambda p: p.stat().st_mtime_ns) if matches else None
 
-REPORT_FOLDER = re.compile(r"^(BTC-USD|ETH-USD)_(\\d{8})_(\\d{6})$")
+REPORT_FOLDER = re.compile(r"^(BTC-USD|ETH-USD)_(\d{8})_(\d{6})$")
 
 def archived_report(folder):
     if not isinstance(folder, str) or not REPORT_FOLDER.fullmatch(folder):
