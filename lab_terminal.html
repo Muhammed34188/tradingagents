@@ -57,7 +57,12 @@ section+section{margin-top:12px}.tag{border:1px solid #3a5169;color:#a9c0df;padd
      <div class="stat"><div class="k">Al-tut getirisi</div><div class="v" id="btHold">—</div></div>
      <div class="stat"><div class="k">Maksimum düşüş</div><div class="v" id="btDD">—</div></div>
      <div class="stat"><div class="k">Kapanmış işlem kazanma oranı</div><div class="v" id="btWin">—</div></div>
+     <div class="stat"><div class="k">Kapanmış işlemlerin net kârı</div><div class="v" id="btClosed">—</div></div>
+     <div class="stat"><div class="k">Açık pozisyonun kâr/zararı</div><div class="v" id="btUnrealized">—</div></div>
+     <div class="stat"><div class="k">Toplam işlem komisyonu</div><div class="v" id="btFees">—</div></div>
+     <div class="stat"><div class="k">Al-tut farkı (puan)</div><div class="v" id="btAlpha">—</div></div>
    </div>
+   <div class="warn" id="btRisk" style="margin-top:14px"></div>
    <h3>Geçmiş sanal özsermaye eğrisi</h3>
    <svg id="btChart" class="chart" viewBox="0 0 690 210" preserveAspectRatio="none" role="img" aria-label="Backtest değer eğrisi"></svg>
    <p class="foot" id="btMethod"></p>
@@ -190,7 +195,12 @@ $('test').onclick=async()=>{
   $('btResults').hidden=false;
   show('btReturn',pct(d.return_pct));show('btHold',pct(d.buy_hold_pct));
   show('btDD',pct(d.max_drawdown_pct));
-  show('btWin',d.win_rate==null?'—':pct(d.win_rate));
+  show('btWin',d.win_rate==null?'—':pct(d.win_rate)+' ('+d.wins+'/'+d.closed_trades+')');
+  show('btClosed',usd(d.closed_pnl));
+  show('btUnrealized',d.open_position?usd(d.unrealized_pnl):'Açık pozisyon yok');
+  show('btFees',usd(d.transaction_fees,4));
+  show('btAlpha',(d.alpha_pp>0?'+':'')+pct(d.alpha_pp)+' puan');
+  show('btRisk',d.risk_alert||'Geçmiş test bir kazanç garantisi değildir.');
   show('btMethod',d.start+' — '+d.end+' • '+d.method);
   show('btStatus',d.strategy+' • '+d.trade_events+' al/sat olayı • '+d.closed_trades+' kapanan işlem');
   graph('btChart',d.curve.map(x=>x.value));
