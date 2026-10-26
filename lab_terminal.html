@@ -103,6 +103,34 @@ section+section{margin-top:12px}.tag{border:1px solid #3a5169;color:#a9c0df;padd
  <h2>İşlem günlüğü</h2><div class="table-wrap"><table><thead><tr><th>Zaman (UTC)</th><th>Varlık</th><th>Yön</th><th>USD</th><th>Fiyat</th><th>Komisyon</th><th>Net kâr</th></tr></thead><tbody id="trades"></tbody></table></div>
  <p id="emptyTrades" class="foot">Henüz sanal işlem yok.</p>
 </section>
+<section class="card">
+ <h2>Risk yönetimi <span class="pill">Sanal</span></h2>
+ <div class="stats">
+  <div class="stat"><div class="k">Varlık başına üst sınır</div><div class="v" id="riskAsset">—</div></div>
+  <div class="stat"><div class="k">Günlük gerçekleşen P/L</div><div class="v" id="riskDaily">—</div></div>
+  <div class="stat"><div class="k">Alım durumu</div><div class="v" id="riskPaused">—</div></div>
+  <div class="stat"><div class="k">Günlük zarar eşiği</div><div class="v" id="riskDailyLimit">—</div></div>
+ </div>
+ <h3>Aktif sanal stoplar</h3>
+ <div class="foot" id="activeStops">Henüz stop ayarlanmadı.</div>
+ <label for="stopPct">Seçili BTC/ETH pozisyonu için sanal stop (%)</label>
+ <input id="stopPct" type="number" min="1" max="20" step="0.5" value="5">
+ <button id="armStop" style="width:100%;margin-top:12px">Sanal stopu etkinleştir</button>
+ <button id="checkStops" class="secondary" style="width:100%;margin-top:8px">Sanal stopları şimdi kontrol et</button>
+ <p class="foot" id="riskMessage">Sanal stop sadece terminal açıkken yaklaşık 90 saniyede bir gecikmeli Yahoo fiyatından kontrol edilir. Fiyat kayması veya erişim kesintisi olabilir; gerçek borsada stop emri kurulmaz.</p>
+ <div class="foot" id="riskEvents"></div>
+</section>
+<section class="card">
+ <h2>Performans analizi</h2>
+ <p id="perfStatus" class="foot">Günlük sonuçlar yükleniyor...</p>
+ <div class="table-wrap"><table><thead><tr><th>Gün (UTC)</th><th>Gerçekleşen P/L</th><th>Komisyon</th><th>İşlem</th><th>Son NAV</th></tr></thead><tbody id="perfRows"></tbody></table></div>
+</section>
+<section class="card">
+ <h2>Yapay zekâ karar takipçisi</h2>
+ <p class="foot">Her yeni raporun AL/SAT/BEKLE görüşü ve kayıt anında ulaşılabilen fiyatı saklanır. 24 saat ve 7 günlük sonuçlar, süre dolduktan sonraki ilk fiyat gözleminden hesaplanır. Önceden üretilen raporlar için geçmiş fiyat tahmin edilmez.</p>
+ <p id="decisionStatus" class="foot">Kararlar yükleniyor...</p>
+ <div class="table-wrap"><table><thead><tr><th>Rapor</th><th>Karar</th><th>İlk gözlem</th><th>24 saat</th><th>7 gün</th></tr></thead><tbody id="decisionRows"></tbody></table></div>
+</section>
 </div></div>
 <p class="warn">TradingAgents kararları, Yahoo fiyatları ve SMA geçmiş testleri finansal tavsiye değildir. Geçmiş test sonucu gelecekteki getiriyi öngörmez. Bu terminal gerçek bir borsaya bağlı değildir.</p>
 </main>
@@ -194,6 +222,72 @@ $('prepareSale').onclick=async()=>{
  show('paperStatus','5$ sanal SAT hazırlandı; henüz emir kaydedilmedi. İşlemi ayrı butonla onaylamalısın.');
  $('amount').scrollIntoView({behavior:'smooth',block:'center'});
 };
+async function loadRisk(){
+ try {
+  const r=await request('/api/risk');
+  show('riskAsset',usd(r.max_asset_usd));
+  show('riskDaily',usd(r.daily_realized_pnl,4));
+  show('riskPaused',r.buys_paused?'DURDURULDU':'Açık');
+  show('riskDailyLimit',usd(r.max_daily_loss_usd));
+  const stops=$('activeStops');stops.replaceChildren();
+  if(!r.stops.length)stops.textContent='Sanal stop yok. Eski pozisyonlar için aşağıdan manuel etkinleştir.';
+  for(const x of r.stops){const line=document.createElement('p');
+    line.textContent=x.ticker+' • tetik fiyatı '+usd(x.stop_price)+' • '+x.armed_at;
+    stops.appendChild(line);}
+  const ev=$('riskEvents');ev.replaceChildren();
+  if(r.events.length){const last=r.events[0];ev.textContent='Son risk olayı: '+last.ticker+' • '+last.event+' • '+last.at;}
+ } catch(e){show('riskMessage','Risk paneli alınamadı: '+e.message);}
+}
+async function loadPerformance(){
+ try{
+  const d=await request('/api/performance');
+  show('perfStatus','Toplam P/L '+usd(d.total_pnl)+' • Açık P/L '+usd(d.unrealized_pnl)+' • Komisyon '+usd(d.fees,4));
+  const body=$('perfRows');body.replaceChildren();
+  for(const v of d.daily){const tr=document.createElement('tr');
+   for(const n of [v.day,usd(v.realized,4),usd(v.fees,4),String(v.trades),usd(v.last_equity)]){
+    const td=document.createElement('td');td.textContent=n;tr.appendChild(td);}
+   body.appendChild(tr);}
+  if(!d.daily.length){const tr=document.createElement('tr'),td=document.createElement('td');td.colSpan=5;td.textContent='Henüz sanal işlem yok.';tr.appendChild(td);body.appendChild(tr);}
+ }catch(e){show('perfStatus','Performans alınamadı: '+e.message);}
+}
+async function loadDecisions(){
+ try{
+  const data=await request('/api/decisions');
+  const rows=$('decisionRows');rows.replaceChildren();
+  show('decisionStatus',data.records.length+' karar • BEKLE bir yön tahmini olmadığı için başarı/başarısızlık oranına dahil edilmez.');
+  for(const v of data.records){const tr=document.createElement('tr');
+   for(const value of [v.ticker+' / '+v.report_date,v.decision,
+     v.observed_price==null?'Eski rapor, fiyat yok':usd(v.observed_price)+' ('+v.observed_at+')',
+     v.h24_return_pct==null?'Bekleniyor':pct(v.h24_return_pct),
+     v.d7_return_pct==null?'Bekleniyor':pct(v.d7_return_pct)]){
+    const td=document.createElement('td');td.textContent=value;tr.appendChild(td);}
+   rows.appendChild(tr);}
+ }catch(e){show('decisionStatus','Karar geçmişi alınamadı: '+e.message);}
+}
+async function checkVirtualStops(){
+ try{
+  const d=await request('/api/risk/check',{method:'POST',
+   headers:{'Content-Type':'application/json','X-Lab-Action':'1'},body:'{}'});
+  if(d.triggered&&d.triggered.length){
+    show('riskMessage','Sanal stop çalıştı: '+d.triggered.map(x=>x.ticker+' / '+usd(x.gross_usd)).join(', ')+' (gecikmeli veri, gerçek emir değil)');
+    await Promise.all([loadPortfolio(),loadPerformance()]);
+  }else if(d.warnings&&d.warnings.length){show('riskMessage','Kontrol uyarısı: '+d.warnings.join(' • '));}
+  await loadRisk();
+ }catch(e){show('riskMessage','Sanal stop kontrol edilemedi: '+e.message);}
+}
+$('armStop').onclick=async()=>{
+ const x=Number($('stopPct').value);
+ if(!Number.isFinite(x)||x<1||x>20){alert('Stop yüzdesi 1–20 arası olmalı.');return;}
+ if(!confirm(ticker+' sanal pozisyonuna gecikmeli fiyat üzerinden %'+x+' stop konulsun mu? Terminal kapalıyken kontrol olmaz.'))return;
+ try{
+  const r=await request('/api/risk/stop',{method:'POST',
+   headers:{'Content-Type':'application/json','X-Lab-Action':'1'},
+   body:JSON.stringify({ticker,pct:x})});
+  show('riskMessage','Sanal stop etkin: '+r.ticker+' • '+usd(r.stop_price)+' • yalnızca terminal açıkken izlenir.');
+  await loadRisk();
+ }catch(e){show('riskMessage','Stop ayarlanamadı: '+e.message);}
+};
+$('checkStops').onclick=checkVirtualStops;
 $('paper').onclick=async()=>{
  if(orderInFlight)return;
  const side=$('action').value,amount=Number($('amount').value);
@@ -232,7 +326,11 @@ async function select(t){
  await Promise.all([loadMarket(),loadSignal()]);
 }
 $('btc').onclick=()=>select('BTC-USD');$('eth').onclick=()=>select('ETH-USD');
-$('refresh').onclick=()=>Promise.all([loadMarket(),loadSignal(),loadPortfolio()]);
-Promise.all([select(ticker),loadPortfolio()]);
-setInterval(()=>{loadMarket();loadPortfolio()},90000);
+$('refresh').onclick=()=>Promise.all([loadMarket(),loadSignal(),loadPortfolio(),loadRisk(),loadPerformance(),loadDecisions()]);
+Promise.all([select(ticker),loadPortfolio(),loadRisk(),loadPerformance(),loadDecisions()]);
+setInterval(async()=>{
+ if(document.visibilityState!=='visible')return;
+ await checkVirtualStops();
+ await Promise.all([loadMarket(),loadPortfolio(),loadPerformance(),loadDecisions()]);
+},90000);
 </script></body></html>
