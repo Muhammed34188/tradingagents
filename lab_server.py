@@ -14,6 +14,7 @@ from urllib.parse import parse_qs, urlsplit
 import lab_terminal
 import lab_risk
 import lab_compare
+import lab_walkforward
 import sqlite3
 
 PASSWORD = os.environ.get("LAB_PASSWORD", "")
@@ -347,7 +348,7 @@ class Handler(BaseHTTPRequestHandler):
             except (ValueError,OSError,RuntimeError,sqlite3.Error) as exc:
                 print("Dashboard GET issue: "+type(exc).__name__,flush=True)
                 return self.json_reply(503,{"error":"Kayıtlı veriler şu anda okunamıyor."})
-        if route.path in ("/api/market", "/api/portfolio", "/api/ai-signal", "/api/backtest", "/api/compare"):
+        if route.path in ("/api/market", "/api/portfolio", "/api/ai-signal", "/api/backtest", "/api/compare", "/api/walkforward"):
             q = parse_qs(route.query)
             try:
                 if route.path == "/api/portfolio":
@@ -361,6 +362,9 @@ class Handler(BaseHTTPRequestHandler):
                         value = lab_terminal.signal(DATA, ticker)
                     elif route.path == "/api/compare":
                         value = lab_compare.compare(ticker)
+                    elif route.path == "/api/walkforward":
+                        observed = lab_risk.decision_history(DATA,check_due=False)["records"]
+                        value = lab_walkforward.run(ticker,observed)
                     else:
                         value = lab_terminal.backtest(ticker)
                 return self.json_reply(200, value)
