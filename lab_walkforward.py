@@ -213,8 +213,15 @@ def calculate(bars,ticker,observations=()):
     days=_validate(completed)
     fold_items=[]
     folds=[]
-    train_end=WINDOW_TRAIN
-    while train_end+WINDOW_VALIDATION+WINDOW_TEST<=len(completed) and len(fold_items)<MAX_FOLDS:
+    # Anchor the LAST OOS fold at the latest COMPLETED daily candle.
+    # Otherwise recently recorded live AI decisions would be permanently
+    # outside a historical OOS window (a moving-window selection bias).
+    available=1+(len(completed)-(WINDOW_TRAIN+WINDOW_VALIDATION+WINDOW_TEST))//STEP
+    fold_count=min(MAX_FOLDS,available)
+    if fold_count<2:
+        raise ValueError("En az 270 günlük fiyat olmadan iki OOS katlaması kurulamaz.")
+    train_end=len(completed)-WINDOW_VALIDATION-WINDOW_TEST-(fold_count-1)*STEP
+    while train_end+WINDOW_VALIDATION+WINDOW_TEST<=len(completed) and len(fold_items)<fold_count:
         val_end=train_end+WINDOW_VALIDATION
         test_end=val_end+WINDOW_TEST
         train_stats={c:simulate(completed,WARMUP,train_end,c) for c in CANDIDATES}
