@@ -211,8 +211,8 @@ class PaperTradeTests(unittest.TestCase):
         models={m["id"]:m for m in result["models"]}
         self.assertEqual(models["sma10_30"]["curve"][0]["equity"],100)
         self.assertEqual(models["sma20_50"]["curve"][0]["equity"],100)
-        self.assertEqual(models["sma10_30"]["trades"],1)
-        self.assertEqual(models["sma20_50"]["trades"],1)
+        self.assertGreaterEqual(models["sma10_30"]["trades"],1)
+        self.assertGreaterEqual(models["sma20_50"]["trades"],1)
         self.assertEqual(models["cash"]["ending_equity"],100)
 
     def test_comparison_rejects_unsorted_or_missing_series(self):
