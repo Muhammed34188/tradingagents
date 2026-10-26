@@ -146,6 +146,42 @@ class PaperTradeTests(unittest.TestCase):
         self.assertEqual(summary["daily"][0]["trades"],1)
         self.assertGreater(summary["fees"],0)
 
+    def test_ai_tracker_scores_only_timely_directional_predictions(self):
+        import lab_risk as risk
+        initial=datetime(2026,10,1,12,0,tzinfo=timezone.utc)
+        rows=[
+            ("one","BTC-USD","AL",100.0,initial+timedelta(hours=25),101.0,
+             initial+timedelta(days=7,hours=2),104.0),
+            ("two","ETH-USD","SAT",100.0,initial+timedelta(hours=26),90.0,
+             initial+timedelta(days=9),120.0),
+            ("three","BTC-USD","BEKLE",100.0,initial+timedelta(hours=24),99.0,
+             None,None),
+            ("four","ETH-USD","AL",100.0,initial+timedelta(hours=32),110.0,
+             None,None)
+        ]
+        with l.connect() as db:
+            risk.setup(db)
+            for rid,symbol,decision,price,t24,p24,t7,p7 in rows:
+                db.execute("""INSERT INTO ai_observations(
+                    report_id,ticker,decision,report_date,observed_at,observed_price,
+                    price_source,h24_at,h24_price,d7_at,d7_price)
+                    VALUES(?,?,?,?,?,?,?,?,?,?,?)""",
+                    (rid,symbol,decision,"2026-10-01",initial.isoformat(),price,"stub",
+                     t24.isoformat() if t24 else None,p24,t7.isoformat() if t7 else None,p7))
+        result=risk.decision_history(Path(self.temp.name)/"nothing",check_due=False)
+        summary=result["summary"]
+        self.assertEqual(summary["h24"]["evaluated"],2)
+        self.assertEqual(summary["h24"]["correct"],2)
+        self.assertEqual(summary["h24"]["accuracy_pct"],100.0)
+        self.assertEqual(summary["h24"]["late_excluded"],1)
+        self.assertEqual(summary["d7"]["evaluated"],1)
+        self.assertEqual(summary["d7"]["late_excluded"],1)
+        hold=next(x for x in result["records"] if x["decision"]=="BEKLE")
+        self.assertIsNone(hold["h24_direction_correct"])
+        late=next(x for x in result["records"] if x["report_id"]=="four")
+        self.assertFalse(late["h24_timely"])
+        self.assertIsNone(late["h24_direction_correct"])
+
     def test_backtest_has_one_bar_delay_and_no_network(self):
         start = datetime(2026, 1, 1, tzinfo=timezone.utc)
         bars = []
