@@ -135,7 +135,7 @@ class PaperTradeTests(unittest.TestCase):
         root=Path(self.temp.name)/"results"
         report=root/"reports"/"BTC-USD_20261026_154600"
         report.mkdir(parents=True)
-        (report/"complete_report.md").write_text("# Report\\n- Rating: Hold\\n")
+        (report/"complete_report.md").write_text("# Report\n- Rating: Hold\n")
         history=risk.decision_history(root,check_due=False)
         self.assertEqual(len(history["records"]),1)
         self.assertEqual(history["records"][0]["decision"],"BEKLE")
