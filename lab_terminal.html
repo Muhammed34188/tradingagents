@@ -254,12 +254,30 @@ async function loadDecisions(){
  try{
   const data=await request('/api/decisions');
   const rows=$('decisionRows');rows.replaceChildren();
-  show('decisionStatus',data.records.length+' karar • BEKLE bir yön tahmini olmadığı için başarı/başarısızlık oranına dahil edilmez.');
+  const stats=data.summary||{};
+  const one=(key,name)=>{
+    const a=stats[key]||{};
+    const measured=Number(a.evaluated)||0;
+    return name+': '+(measured?((a.correct||0)+'/'+measured+' ('+a.accuracy_pct+'%)'):'henüz ölçüm yok')+
+      ' • geciken '+(a.late_excluded||0);
+  };
+  show('decisionStatus',data.records.length+' kayıt • '+one('h24','24 saat')+' • '+one('d7','7 gün')+
+       '. BEKLE yön tahmini olmadığından puanlanmaz.');
+  const measure=(row,key)=>{
+    if(row.observed_price==null)return 'Başlangıç fiyatı yok';
+    const value=row[key+'_return_pct'];
+    if(value==null)return 'Henüz ölçülmedi';
+    const delay=row[key+'_elapsed_hours'];
+    const when=delay==null?'':' ('+delay+' saat sonrası)';
+    if(!row[key+'_timely'])return 'Geç gözlem: '+pct(value)+when+' • puan dışı';
+    return (value>0?'+':'')+pct(value)+when+
+      (row[key+'_direction_correct']===null?'':row[key+'_direction_correct']?' • doğru':' • yanlış');
+  };
   for(const v of data.records){const tr=document.createElement('tr');
    for(const value of [v.ticker+' / '+v.report_date,v.decision,
      v.observed_price==null?'Eski rapor, fiyat yok':usd(v.observed_price)+' ('+v.observed_at+')',
-     v.h24_return_pct==null?'Bekleniyor':pct(v.h24_return_pct),
-     v.d7_return_pct==null?'Bekleniyor':pct(v.d7_return_pct)]){
+     measure(v,'h24'),
+     measure(v,'d7')]){
     const td=document.createElement('td');td.textContent=value;tr.appendChild(td);}
    rows.appendChild(tr);}
  }catch(e){show('decisionStatus','Karar geçmişi alınamadı: '+e.message);}
