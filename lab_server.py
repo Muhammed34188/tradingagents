@@ -62,6 +62,8 @@ a{color:#79e9bc}.footer{font-size:12px;color:#8794b2;margin-top:26px;line-height
 <p id="report"></p></div>
 <div class="card"><h2 style="font-size:18px;margin:0 0 12px">Kaydedilen analizler</h2>
 <div class="st" id="history">Arşiv yükleniyor...</div></div>
+<div class="card"><h2 style="font-size:18px;margin:0 0 12px">Sistem tanısı</h2>
+<div class="st" id="diagnostics">Durum kontrol ediliyor...</div></div>
 <div class="notice">Bu araştırma yazılımı kazanç garantisi vermez. API sağlayıcısı işlem başına ücret alabilir. Günlük en fazla 4 analiz ve aynı anda tek analiz sınırlaması vardır. Gerçek borsa API bağlantısı veya otomatik al-sat özelliği yoktur.</div>
 <div class="footer">TauricResearch/TradingAgents açık kaynak projesini kullanır. Bu panel yalnızca özel laboratuvar ortamıdır. Yeni analizler kalıcı Railway diskinde saklanır. Veri güvenliği için ayrıca düzenli yedekleme önerilir.</div>
 </main><script>
@@ -78,6 +80,14 @@ async function poll(){
  'Kalan günlük analiz: '+s.daily_remaining;
  el('report').replaceChildren();
  if(s.report_url){let a=document.createElement('a');a.href=s.report_url;a.textContent='Tam analiz raporunu aç';a.target='_blank';a.rel='noopener';el('report').appendChild(a);}
+ const dr=await fetch('/api/diagnostics',{cache:'no-store'});
+ if(dr.ok) {
+   const dg=await dr.json();
+   el('diagnostics').textContent=
+     (dg.home_correct?'Çalışma klasörü: doğru':'Çalışma klasörü: yapılandırma hatası')+'\\n'+
+     (dg.storage_writable?'Disk yazma erişimi: hazır':'Disk yazma erişimi: kontrol gerekli')+'\\n'+
+     (dg.category==='none'?'Son hata: yok':'Önceki hata: '+dg.message);
+ }
  const hr=await fetch('/api/history',{cache:'no-store'});
  if(!hr.ok)throw Error('Arşiv yanıtı '+hr.status);
  const history=(await hr.json()).reports || [];
@@ -191,6 +201,40 @@ def report_history():
         item.pop("sort_key")
     return reports[:40]
 
+def diagnostic_status():
+    """Read a safe, categorized summary of the previous run; never expose raw logs."""
+    home = os.environ.get("HOME", "")
+    writable = os.access(str(DATA), os.W_OK) if DATA.exists() else os.access(str(DATA.parent), os.W_OK)
+    result = {"category": "none", "message": "Hata kaydı bulunamadı.",
+              "home_correct": home == "/home/appuser", "storage_writable": writable}
+    if not LOG.is_file():
+        return result
+    try:
+        tail = LOG.read_text(encoding="utf-8", errors="replace")[-30000:].lower()
+    except OSError:
+        result.update(category="log_unavailable", message="Hata kaydı okunamadı.")
+        return result
+    failures = [
+        ("permissionerror", "storage_permission", "Dosya yazma izni hatası; disk / HOME ayarları kontrol edilmeli."),
+        ("permission denied", "storage_permission", "Dosya veya klasör izni hatası tespit edildi."),
+        ("insufficient_quota", "api_quota", "OpenAI API kotası veya ödeme limiti yetersiz."),
+        ("ratelimiterror", "api_rate_limit", "OpenAI istek sınırı veya kullanım kotası aşıldı."),
+        ("authenticationerror", "api_auth", "OpenAI API kimlik doğrulama hatası."),
+        ("invalid_api_key", "api_auth", "OpenAI API anahtarı geçersiz."),
+        ("model_not_found", "model_unavailable", "Seçilen OpenAI modeli kullanılamıyor."),
+        ("notfounderror", "model_unavailable", "İstenen model veya kaynak bulunamadı."),
+        ("badrequesterror", "api_request", "Model API isteğini kabul etmedi; parametreler gözden geçirilmeli."),
+        ("no terminal to answer", "missing_configuration", "CLI ortam değişkenlerinde eksik ayar var."),
+        ("filenotfounderror", "missing_file", "Bir dosya bulunamadı."),
+        ("connectionerror", "network", "Piyasa verisi veya model servisine erişim sorunu."),
+        ("traceback (most recent call last)", "unknown_exception", "Python çalışma hatası görüldü; ayrıntılı log geliştirici incelemesi gerektirir."),
+    ]
+    for needle, kind, message in failures:
+        if needle in tail:
+            result.update(category=kind, message=message)
+            break
+    return result
+
 def snapshot():
     with LOCK:
         if STATE["daily_date"] != date.today().isoformat():
@@ -281,6 +325,8 @@ class Handler(BaseHTTPRequestHandler):
             return self.json_reply(200, snapshot())
         if route.path == "/api/history":
             return self.json_reply(200, {"reports": report_history()})
+        if route.path == "/api/diagnostics":
+            return self.json_reply(200, diagnostic_status())
         if route.path == "/report":
             q = parse_qs(route.query)
             if "id" in q:
