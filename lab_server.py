@@ -27,6 +27,7 @@ PROVIDER = os.environ.get("TRADINGAGENTS_LLM_PROVIDER", "openai").lower()
 LOCK = threading.Lock()
 STATE = {"running": False, "status": "Henüz analiz yapılmadı", "ticker": None,
          "date": None, "started": None, "finished": None, "exit_code": None,
+         "report_file": None,
          "daily_date": None, "daily_count": 0}
 MAX_DAILY_RUNS = 4
 
@@ -113,7 +114,30 @@ def provider_ready():
     return bool(os.environ.get(PROVIDER_KEYS.get(PROVIDER, "_UNKNOWN_KEY"), "").strip())
 
 def report_path(ticker, day):
-    return DATA / ticker / day / "reports" / "complete_report.html"
+    # The upstream CLI writes to results/reports/<ticker>_<timestamp>/complete_report.html.
+    # Only expose the file produced by the current run; never a stale report.
+    if ticker not in TICKERS or not valid_day(day):
+        return None
+    with LOCK:
+        path = STATE.get("report_file")
+        matching = STATE.get("ticker") == ticker and STATE.get("date") == day
+    if not matching or not path:
+        return None
+    candidate = Path(path)
+    expected_root = (DATA / "reports").resolve()
+    if expected_root not in candidate.resolve().parents:
+        return None
+    return candidate if candidate.is_file() else None
+
+def newest_report(ticker, since_ns):
+    parent = DATA / "reports"
+    if not parent.is_dir():
+        return None
+    matches = [
+        p for p in parent.glob(ticker + "_*/complete_report.html")
+        if p.is_file() and p.stat().st_mtime_ns >= since_ns - 3_000_000_000
+    ]
+    return max(matches, key=lambda p: p.stat().st_mtime_ns) if matches else None
 
 def snapshot():
     with LOCK:
@@ -125,15 +149,16 @@ def snapshot():
     s["provider_ready"] = provider_ready()
     s["report_url"] = (
         "/report?ticker=" + s["ticker"] + "&date=" + s["date"]
-        if s["ticker"] in TICKERS and valid_day(s["date"] or "")
-        and report_path(s["ticker"], s["date"]).is_file()
-        else None
+        if report_path(s["ticker"], s["date"]) else None
     )
     s.pop("daily_date", None)
     s.pop("daily_count", None)
+    s.pop("report_file", None)
     return s
 
 def worker(ticker, day):
+    import time
+    started_ns = time.time_ns()
     cmd = ["tradingagents", "--ticker", ticker, "--date", day,
            "--analysts", "market,news", "--save", "--no-show", "--html"]
     LOG.parent.mkdir(parents=True, exist_ok=True)
@@ -145,8 +170,17 @@ def worker(ticker, day):
                                     stderr=subprocess.STDOUT, timeout=1800,
                                     check=False, env=os.environ.copy())
             code = result.returncode
-            detail = "Analiz tamamlandı. Rapor bağlantısı aşağıda." if code == 0 else (
-                "Analiz hata ile durdu. API anahtarını, model erişimini ve Railway kayıtlarını kontrol et.")
+            created = newest_report(ticker, started_ns) if code == 0 else None
+            if code == 0 and created:
+                with LOCK:
+                    STATE["report_file"] = str(created)
+                detail = "Analiz tamamlandı. Tam raporu açabilirsiniz."
+            elif code == 0:
+                detail = ("Analiz işlemi bitti ancak rapor dosyası oluşmadı. "
+                          "Yeniden çalıştırmadan önce Railway kayıtları incelenmeli.")
+            else:
+                detail = ("Analiz hata ile durdu. API erişimini veya Railway "
+                          "analiz kayıtlarını kontrol edin.")
     except subprocess.TimeoutExpired:
         detail = "Analiz 30 dakikalık çalışma sınırını aştı ve sonlandırıldı."
     except Exception:
@@ -200,7 +234,7 @@ class Handler(BaseHTTPRequestHandler):
             if ticker not in TICKERS or not valid_day(day):
                 return self.json_reply(400, {"error": "Geçersiz rapor."})
             report = report_path(ticker, day)
-            if not report.is_file():
+            if report is None or not report.is_file():
                 return self.json_reply(404, {"error": "Rapor bulunamadı."})
             return self.reply(200, report.read_bytes(), "text/html", {
                 "Content-Security-Policy": "sandbox; default-src 'none'; style-src 'unsafe-inline'; img-src data:; base-uri 'none'"})
@@ -236,7 +270,7 @@ class Handler(BaseHTTPRequestHandler):
             STATE["daily_count"] += 1
             STATE.update(running=True, status="Analistler çalışıyor...", ticker=ticker, date=day,
                          started=datetime.now().isoformat(timespec="seconds"),
-                         finished=None, exit_code=None)
+                         finished=None, exit_code=None, report_file=None)
         threading.Thread(target=worker, args=(ticker, day), daemon=True).start()
         return self.json_reply(202, {"ok": True})
 
