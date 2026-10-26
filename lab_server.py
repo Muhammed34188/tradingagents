@@ -60,8 +60,10 @@ a{color:#79e9bc}.footer{font-size:12px;color:#8794b2;margin-top:26px;line-height
 <div class="card"><h2 style="font-size:18px;margin:0 0 12px">Çalışma durumu</h2>
 <div class="st" id="status">Yükleniyor...</div>
 <p id="report"></p></div>
+<div class="card"><h2 style="font-size:18px;margin:0 0 12px">Kaydedilen analizler</h2>
+<div class="st" id="history">Arşiv yükleniyor...</div></div>
 <div class="notice">Bu araştırma yazılımı kazanç garantisi vermez. API sağlayıcısı işlem başına ücret alabilir. Günlük en fazla 4 analiz ve aynı anda tek analiz sınırlaması vardır. Gerçek borsa API bağlantısı veya otomatik al-sat özelliği yoktur.</div>
-<div class="footer">TauricResearch/TradingAgents açık kaynak projesini kullanır. Bu panel yalnızca özel laboratuvar ortamıdır. Analiz sonuçları Railway servisi yeniden oluşturulduğunda kaybolabilir.</div>
+<div class="footer">TauricResearch/TradingAgents açık kaynak projesini kullanır. Bu panel yalnızca özel laboratuvar ortamıdır. Yeni analizler kalıcı Railway diskinde saklanır. Veri güvenliği için ayrıca düzenli yedekleme önerilir.</div>
 </main><script>
 const el=id=>document.getElementById(id);
 el('day').value=new Date().toLocaleDateString('en-CA');
@@ -76,6 +78,17 @@ async function poll(){
  'Kalan günlük analiz: '+s.daily_remaining;
  el('report').replaceChildren();
  if(s.report_url){let a=document.createElement('a');a.href=s.report_url;a.textContent='Tam analiz raporunu aç';a.target='_blank';a.rel='noopener';el('report').appendChild(a);}
+ const hr=await fetch('/api/history',{cache:'no-store'});
+ if(!hr.ok)throw Error('Arşiv yanıtı '+hr.status);
+ const history=(await hr.json()).reports || [];
+ const container=el('history');container.replaceChildren();
+ if(!history.length){container.textContent='Kalıcı diskte henüz kayıtlı rapor yok.';}
+ for(const item of history){
+   const wrap=document.createElement('div');wrap.style.padding='9px 0';
+   const a=document.createElement('a');a.href=item.url;a.target='_blank';a.rel='noopener';
+   a.textContent=item.ticker+' • '+item.saved_at;
+   wrap.appendChild(a);container.appendChild(wrap);
+ }
  }catch(err){el('status').textContent='Bağlantı hatası: '+err.message;}
 }
 el('run').onclick=async()=>{
@@ -138,6 +151,45 @@ def newest_report(ticker, since_ns):
         if p.is_file() and p.stat().st_mtime_ns >= since_ns - 3_000_000_000
     ]
     return max(matches, key=lambda p: p.stat().st_mtime_ns) if matches else None
+
+REPORT_FOLDER = re.compile(r"^(BTC-USD|ETH-USD)_(\\d{8})_(\\d{6})$")
+
+def archived_report(folder):
+    if not isinstance(folder, str) or not REPORT_FOLDER.fullmatch(folder):
+        return None
+    path = DATA / "reports" / folder / "complete_report.html"
+    root = (DATA / "reports").resolve()
+    if root not in path.resolve().parents or not path.is_file() or path.is_symlink():
+        return None
+    return path
+
+def report_history():
+    root = DATA / "reports"
+    if not root.is_dir():
+        return []
+    reports = []
+    for folder in root.iterdir():
+        match = REPORT_FOLDER.fullmatch(folder.name)
+        if not match or not folder.is_dir():
+            continue
+        file = archived_report(folder.name)
+        if not file:
+            continue
+        try:
+            stamp = datetime.strptime(match.group(2) + match.group(3), "%Y%m%d%H%M%S")
+        except ValueError:
+            continue
+        reports.append({
+            "id": folder.name,
+            "ticker": match.group(1),
+            "saved_at": stamp.strftime("%d.%m.%Y %H:%M"),
+            "url": "/report?id=" + folder.name,
+            "sort_key": stamp.isoformat(),
+        })
+    reports.sort(key=lambda x: x["sort_key"], reverse=True)
+    for item in reports:
+        item.pop("sort_key")
+    return reports[:40]
 
 def snapshot():
     with LOCK:
@@ -227,13 +279,18 @@ class Handler(BaseHTTPRequestHandler):
                               {"Content-Security-Policy": "default-src 'self'; script-src 'unsafe-inline'; style-src 'unsafe-inline'; connect-src 'self'; base-uri 'none'; frame-ancestors 'none'"})
         if route.path == "/api/status":
             return self.json_reply(200, snapshot())
+        if route.path == "/api/history":
+            return self.json_reply(200, {"reports": report_history()})
         if route.path == "/report":
             q = parse_qs(route.query)
-            ticker = q.get("ticker", [""])[0]
-            day = q.get("date", [""])[0]
-            if ticker not in TICKERS or not valid_day(day):
-                return self.json_reply(400, {"error": "Geçersiz rapor."})
-            report = report_path(ticker, day)
+            if "id" in q:
+                report = archived_report(q.get("id", [""])[0])
+            else:
+                ticker = q.get("ticker", [""])[0]
+                day = q.get("date", [""])[0]
+                if ticker not in TICKERS or not valid_day(day):
+                    return self.json_reply(400, {"error": "Geçersiz rapor."})
+                report = report_path(ticker, day)
             if report is None or not report.is_file():
                 return self.json_reply(404, {"error": "Rapor bulunamadı."})
             return self.reply(200, report.read_bytes(), "text/html", {
