@@ -88,6 +88,64 @@ class PaperTradeTests(unittest.TestCase):
         self.assertEqual(result["signal"], "BEKLE")
         self.assertEqual(result["report_id"], folder.name)
 
+    def test_risk_asset_limit_blocks_new_paper_buy(self):
+        import lab_risk as risk
+        with patch.object(l, "market", side_effect=self.ticker_quote):
+            with self.assertRaisesRegex(ValueError, "25 USD"):
+                l.paper_order({"ticker":"BTC-USD","side":"BUY","amount":26})
+            self.assertEqual(l.portfolio()["cash"],100)
+            l.paper_order({"ticker":"BTC-USD","side":"BUY","amount":10})
+            risk_data=risk.risk_dashboard()
+            self.assertEqual(len(risk_data["stops"]),1)
+            self.assertEqual(risk_data["stops"][0]["ticker"],"BTC-USD")
+
+    def test_stop_trigger_is_virtual_and_idempotent(self):
+        import lab_risk as risk
+        with patch.object(l, "market", side_effect=self.ticker_quote):
+            l.paper_order({"ticker":"BTC-USD","side":"BUY","amount":10})
+            stop=risk.stop_control("BTC-USD",5)
+            self.assertGreater(stop["stop_price"],0)
+        def quote(ticker):
+            return {"ticker":ticker,"price":45000,"fresh":True,"as_of":datetime.now(timezone.utc).isoformat()}
+        with patch.object(l,"market",side_effect=quote):
+            a=risk.check_stops()
+            b=risk.check_stops()
+            portfolio=l.portfolio()
+        self.assertEqual(len(a["triggered"]),1)
+        self.assertEqual(len(b["triggered"]),0)
+        self.assertEqual(len(portfolio["positions"]),0)
+        self.assertEqual(portfolio["closed_trades"],1)
+        self.assertEqual(len(risk.risk_dashboard()["stops"]),0)
+
+    def test_loss_limit_restricts_buys_but_not_sells(self):
+        import lab_risk as risk
+        with patch.object(l,"market",side_effect=self.ticker_quote):
+            l.paper_order({"ticker":"BTC-USD","side":"BUY","amount":10})
+            with l.connect() as db:
+                db.execute("INSERT INTO trades(at,ticker,side,qty,price,fee,realized,amount) VALUES(?,?,?,?,?,?,?,?)",
+                  (datetime.now(timezone.utc).isoformat(),"ETH-USD","SELL",0.01,2000,0,-4,20))
+            with self.assertRaisesRegex(ValueError,"Günlük gerçekleşmiş"):
+                l.paper_order({"ticker":"ETH-USD","side":"BUY","amount":5})
+            result=l.paper_order({"ticker":"BTC-USD","side":"SELL","amount":5})
+            self.assertEqual(result["side"],"SELL")
+            self.assertTrue(risk.risk_dashboard()["buys_paused"])
+
+    def test_performance_and_legacy_ai_observation(self):
+        import lab_risk as risk
+        root=Path(self.temp.name)/"results"
+        report=root/"reports"/"BTC-USD_20261026_154600"
+        report.mkdir(parents=True)
+        (report/"complete_report.md").write_text("# Report\\n- Rating: Hold\\n")
+        history=risk.decision_history(root,check_due=False)
+        self.assertEqual(len(history["records"]),1)
+        self.assertEqual(history["records"][0]["decision"],"BEKLE")
+        self.assertIsNone(history["records"][0]["observed_price"])
+        with patch.object(l,"market",side_effect=self.ticker_quote):
+            l.paper_order({"ticker":"BTC-USD","side":"BUY","amount":10})
+            summary=risk.performance()
+        self.assertEqual(summary["daily"][0]["trades"],1)
+        self.assertGreater(summary["fees"],0)
+
     def test_backtest_has_one_bar_delay_and_no_network(self):
         start = datetime(2026, 1, 1, tzinfo=timezone.utc)
         bars = []
