@@ -182,6 +182,51 @@ class PaperTradeTests(unittest.TestCase):
         self.assertFalse(late["h24_timely"])
         self.assertIsNone(late["h24_direction_correct"])
 
+    def test_fixed_strategy_comparison_includes_costs_and_cash(self):
+        import lab_compare
+        start=datetime(2026,1,1,tzinfo=timezone.utc)
+        bars=[{"time":(start+timedelta(days=i)).isoformat(),
+               "open":100.0,"close":100.0} for i in range(85)]
+        with patch.object(l,"get_series",return_value=bars):
+            result=lab_compare.compare("BTC-USD")
+        models={m["id"]:m for m in result["models"]}
+        self.assertEqual(result["comparison_start"],bars[50]["time"][:10])
+        self.assertEqual(result["observations"],35)
+        self.assertEqual(models["cash"]["ending_equity"],100)
+        self.assertEqual(models["cash"]["trades"],0)
+        self.assertEqual(models["sma20_50"]["trades"],0)
+        self.assertEqual(models["sma10_30"]["trades"],0)
+        self.assertLess(models["buyhold"]["ending_equity"],100)
+        self.assertGreater(models["buyhold"]["fees_usd"],0)
+        self.assertEqual(models["buyhold"]["trades"],1)
+
+    def test_comparison_never_uses_current_day_close_to_trade_at_open(self):
+        import lab_compare
+        start=datetime(2026,1,1,tzinfo=timezone.utc)
+        bars=[{"time":(start+timedelta(days=i)).isoformat(),
+               "open":100.0,"close":100.0} for i in range(70)]
+        bars[50]["close"]=250.0
+        with patch.object(l,"get_series",return_value=bars):
+            result=lab_compare.compare("ETH-USD")
+        models={m["id"]:m for m in result["models"]}
+        self.assertEqual(models["sma10_30"]["curve"][0]["equity"],100)
+        self.assertEqual(models["sma20_50"]["curve"][0]["equity"],100)
+        self.assertEqual(models["sma10_30"]["trades"],1)
+        self.assertEqual(models["sma20_50"]["trades"],1)
+        self.assertEqual(models["cash"]["ending_equity"],100)
+
+    def test_comparison_rejects_unsorted_or_missing_series(self):
+        import lab_compare
+        from datetime import timezone
+        start=datetime(2026,1,1,tzinfo=timezone.utc)
+        bars=[{"time":(start+timedelta(days=i)).isoformat(),
+               "open":100.0,"close":100.0} for i in range(80)]
+        with self.assertRaisesRegex(ValueError,"65"):
+            lab_compare.calculate(bars[:20],"BTC-USD")
+        bars[70]["time"]=bars[69]["time"]
+        with self.assertRaisesRegex(ValueError,"tekrarsız"):
+            lab_compare.calculate(bars,"ETH-USD")
+
     def test_backtest_has_one_bar_delay_and_no_network(self):
         start = datetime(2026, 1, 1, tzinfo=timezone.utc)
         bars = []
