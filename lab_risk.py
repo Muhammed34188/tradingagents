@@ -14,6 +14,9 @@ MAX_RISK_USD=2.0
 MAX_DAILY_LOSS_USD=3.0
 MAX_DRAWDOWN_PCT=10.0
 STAGES=(("h24",timedelta(hours=24)),("d7",timedelta(days=7)))
+# If the browser was closed and data are collected much later, we preserve the
+# price observation but do NOT score it as a 24h/7d result.
+SCORING_GRACE={"h24":timedelta(hours=3),"d7":timedelta(hours=12)}
 
 def utc():
     return datetime.now(timezone.utc).isoformat(timespec="seconds")
@@ -261,15 +264,42 @@ def decision_history(root, check_due=True):
         with base.connect() as db:
             setup(db)
             rows=[dict(r) for r in db.execute("SELECT * FROM ai_observations ORDER BY report_id DESC LIMIT 50")]
-    for row in rows:
-        p=row["observed_price"]
-        for stage,_ in STAGES:
+    summary={}
+    for stage,duration in STAGES:
+        checked=0
+        correct=0
+        late=0
+        pending=0
+        for row in rows:
+            initial_str=row["observed_at"]
             price=row[stage+"_price"]
-            pct=round(100*(price/p-1),2) if p and price else None
+            observed_str=row[stage+"_at"]
+            has_base=row["observed_price"] is not None and initial_str is not None
+            on_time=False
+            elapsed_hours=None
+            if has_base and observed_str and price is not None:
+                elapsed=(datetime.fromisoformat(observed_str)-datetime.fromisoformat(initial_str))
+                elapsed_hours=round(elapsed.total_seconds()/3600,1)
+                on_time=(duration<=elapsed<=duration+SCORING_GRACE[stage])
+            pct=round(100*(price/row["observed_price"]-1),2) if has_base and price is not None else None
             row[stage+"_return_pct"]=pct
-            # HOLD does not imply a direction: report price movement, no win label.
+            row[stage+"_elapsed_hours"]=elapsed_hours
+            row[stage+"_timely"]=on_time
             row[stage+"_direction_correct"]=(
                 pct>0 if row["decision"]=="AL" else
                 pct<0 if row["decision"]=="SAT" else None
-            ) if pct is not None else None
-    return {"records":rows,"disclaimer":"AI takibi yalnızca ilk kaydedilen gecikmeli fiyat üzerinden yapılır; 24s/7g kontrolleri ilk uygun gözlemde hesaplanır. BEKLE için kazanma oranı verilmez. Geçmiş raporun o anki fiyatı sonradan uydurulmaz."}
+            ) if on_time and pct is not None and row["decision"] in ("AL","SAT") else None
+            if row["decision"] not in ("AL","SAT") or not has_base:
+                continue
+            if pct is None:
+                pending+=1
+            elif not on_time:
+                late+=1
+            else:
+                checked+=1
+                correct+=int(row[stage+"_direction_correct"])
+        summary[stage]={"evaluated":checked,"correct":correct,
+                        "accuracy_pct":round(100*correct/checked,1) if checked else None,
+                        "pending":pending,"late_excluded":late}
+    return {"records":rows,"summary":summary,
+            "disclaimer":"Yalnızca kayıtlı başlangıç fiyatı olan AL/SAT yön tahminleri değerlendirilir. 24 saat (+3 saat tolerans) ve 7 gün (+12 saat tolerans) dışındaki geç gözlemler başarı hesabından çıkarılır. BEKLE yön tahmini değildir. Bu bir getiri veya işlem performansı ölçümü değildir."}
