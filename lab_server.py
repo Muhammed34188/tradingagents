@@ -15,6 +15,7 @@ import lab_terminal
 import lab_risk
 import lab_compare
 import lab_walkforward
+import lab_validation
 import sqlite3
 
 PASSWORD = os.environ.get("LAB_PASSWORD", "")
@@ -336,6 +337,14 @@ class Handler(BaseHTTPRequestHandler):
             path = Path(__file__).with_name("lab_terminal.html")
             return self.reply(200, path.read_bytes(), "text/html", {
                 "Content-Security-Policy": "default-src 'self'; script-src 'unsafe-inline'; style-src 'unsafe-inline'; connect-src 'self'; base-uri 'none'; frame-ancestors 'none'"})
+        if route.path in ("/api/ledger-audit", "/api/forward"):
+            try:
+                value=(lab_validation.audit_portfolio() if route.path=="/api/ledger-audit"
+                       else lab_validation.forward_status())
+                return self.json_reply(200,value)
+            except (OSError,ValueError,RuntimeError,sqlite3.Error) as exc:
+                print("Quality dashboard unavailable: "+type(exc).__name__,flush=True)
+                return self.json_reply(503,{"error":"Denetim verileri okunamıyor."})
         if route.path in ("/api/risk", "/api/performance", "/api/decisions"):
             try:
                 if route.path == "/api/risk":
@@ -365,6 +374,9 @@ class Handler(BaseHTTPRequestHandler):
                     elif route.path == "/api/walkforward":
                         observed = lab_risk.decision_history(DATA,check_due=False)["records"]
                         value = lab_walkforward.run(ticker,observed)
+                        value["stability_review"]=lab_validation.stability(value)
+                        value["trade_attribution"]=lab_validation.trade_attribution(
+                            lab_terminal.get_series(ticker,"1y","1d",ttl=600),value)
                     else:
                         value = lab_terminal.backtest(ticker)
                 return self.json_reply(200, value)
@@ -401,6 +413,24 @@ class Handler(BaseHTTPRequestHandler):
     def do_POST(self):
         if not self.verify():
             return
+        if urlsplit(self.path).path in ("/api/forward/record", "/api/forward/evaluate"):
+            if self.headers.get("X-Lab-Action") != "1" or not self.headers.get("Content-Type","").startswith("application/json"):
+                return self.json_reply(403,{"error":"Güvenlik doğrulaması başarısız."})
+            try:
+                size=int(self.headers.get("Content-Length","0"))
+                if size<2 or size>512:raise ValueError("Geçersiz veri boyutu.")
+                payload=json.loads(self.rfile.read(size))
+                symbol=lab_terminal.valid_ticker(payload.get("ticker"))
+                if urlsplit(self.path).path=="/api/forward/record":
+                    value=lab_validation.record_forward(symbol)
+                else:
+                    value=lab_validation.evaluate_forward(symbol)
+                return self.json_reply(200,value)
+            except (ValueError,TypeError,KeyError,json.JSONDecodeError) as exc:
+                return self.json_reply(422,{"error":str(exc)})
+            except (RuntimeError,OSError,sqlite3.Error) as exc:
+                print("Forward test issue: "+type(exc).__name__,flush=True)
+                return self.json_reply(503,{"error":"İleriye dönük sanal test şu anda çalışmıyor."})
         if urlsplit(self.path).path in ("/api/risk/stop","/api/risk/check"):
             if self.headers.get("X-Lab-Action") != "1" or not self.headers.get("Content-Type","").startswith("application/json"):
                 return self.json_reply(403,{"error":"Güvenlik kontrolü başarısız."})
