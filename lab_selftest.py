@@ -44,6 +44,25 @@ class PaperTradeTests(unittest.TestCase):
             self.assertLess(after_sell["cash"], 90.1)
             self.assertLess(after_sell["realized_pnl"], 0)
             self.assertEqual(len(after_sell["trades"]), 2)
+            self.assertGreater(buy["price"], 50000)
+            self.assertLess(sell["price"], 50000)
+            self.assertGreater(after_sell["fees_paid"], 0)
+            self.assertGreaterEqual(len(after_sell["curve"]), 2)
+            self.assertEqual(after_sell["trades"][0]["side"], "SELL")
+            self.assertLess(after_sell["unrealized_pnl"], 0)
+
+    def test_five_dollar_paper_sale_and_equity_curve(self):
+        with patch.object(l, "market", side_effect=self.ticker_quote):
+            l.portfolio()
+            l.paper_order({"ticker":"BTC-USD","side":"BUY","amount":10})
+            receipt=l.paper_order({"ticker":"BTC-USD","side":"SELL","amount":5})
+            state=l.portfolio()
+            self.assertTrue(receipt["ok"])
+            self.assertEqual(receipt["side"],"SELL")
+            self.assertAlmostEqual(state["cash"], 90+5-0.005, places=3)
+            self.assertEqual(state["closed_trades"],1)
+            self.assertAlmostEqual(len(state["trades"]),2)
+            self.assertGreaterEqual(len(state["curve"]),3)
 
     def test_cannot_overspend_or_short(self):
         with patch.object(l, "market", side_effect=self.ticker_quote):
