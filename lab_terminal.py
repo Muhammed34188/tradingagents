@@ -103,7 +103,7 @@ def connect():
         nav REAL NOT NULL)""")
     return db
 
-def portfolio(mark_prices=None):
+def portfolio(mark_prices=None, record_trade=False):
     with MUTEX:
         with connect() as db:
             acc = db.execute("SELECT cash,initial FROM account WHERE id=1").fetchone()
@@ -134,7 +134,7 @@ def portfolio(mark_prices=None):
             if not missing:
                 now = datetime.now(timezone.utc).isoformat(timespec="seconds")
                 last = db.execute("SELECT at FROM equity ORDER BY id DESC LIMIT 1").fetchone()
-                if not last or (datetime.fromisoformat(now)-datetime.fromisoformat(last["at"])).total_seconds() >= 60:
+                if record_trade or not last or (datetime.fromisoformat(now)-datetime.fromisoformat(last["at"])).total_seconds() >= 60:
                     db.execute("INSERT INTO equity(at,nav) VALUES(?,?)", (now,nav))
             curve = [{"time":x["at"],"nav":round(x["nav"],4)} for x in db.execute("SELECT at,nav FROM equity ORDER BY id DESC LIMIT 400").fetchall()][::-1]
             peak=0.0
@@ -143,11 +143,16 @@ def portfolio(mark_prices=None):
                 peak=max(peak,point["nav"])
                 if peak>0:worst=min(worst,100*(point["nav"]/peak-1))
             count=realized_row["cnt"]
+            fees=db.execute("SELECT COALESCE(SUM(fee),0) AS total FROM trades").fetchone()["total"]
+            basis=sum(float(p["qty"])*float(p["avg_cost"]) for p in ps)
+            unrealized=(sum(float(p["value"]) for p in positions)-basis) if not missing else None
             return {
                 "starting_cash":100.0,
                 "cash":round(acc["cash"],4),"equity":round(nav,4) if not missing else None,
                 "unpriced":missing,"positions":positions,"trades":trades,
                 "realized_pnl":round(realized_row["pnl"],4),
+                "unrealized_pnl":round(unrealized,4) if unrealized is not None else None,
+                "fees_paid":round(fees,4),
                 "total_pnl":round(nav-100,4) if not missing else None,
                 "win_rate":round(100*realized_row["wins"]/count,2) if count else None,
                 "closed_trades":count,"max_drawdown_pct":round(worst,2),
@@ -166,7 +171,8 @@ def paper_order(payload):
     quote=market(ticker)
     if not quote["fresh"]:
         raise ValueError("Fiyat güncel değil; sanal işlem yapılmadı.")
-    px=quote["price"]
+    quoted_price=quote["price"]
+    px=quoted_price*(1+SLIPPAGE if side=="BUY" else 1-SLIPPAGE)
     if px <= 0:
         raise ValueError("Geçersiz fiyat.")
     at=datetime.now(timezone.utc).isoformat(timespec="seconds")
@@ -206,6 +212,10 @@ def paper_order(payload):
             db.execute("INSERT INTO trades(at,ticker,side,qty,price,fee,realized,amount) VALUES(?,?,?,?,?,?,?,?)",
                        (at,ticker,side,qty,px,fee,realized,amount))
             db.execute("COMMIT")
+            try:
+                portfolio(mark_prices={ticker:quoted_price},record_trade=True)
+            except (ValueError,OSError,sqlite3.Error):
+                pass
             return {"ok":True,"ticker":ticker,"side":side,"filled_usd":round(amount,4),
                     "price":px,"qty":round(qty,9),"fee":round(fee,5),"realized":round(realized,5),
                     "notice":"Yalnızca sanal emir. Gerçek borsaya talimat gönderilmedi."}
