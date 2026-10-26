@@ -84,8 +84,8 @@ async function poll(){
  if(dr.ok) {
    const dg=await dr.json();
    el('diagnostics').textContent=
-     (dg.home_correct?'Çalışma klasörü: doğru':'Çalışma klasörü: yapılandırma hatası')+'\\n'+
-     (dg.storage_writable?'Disk yazma erişimi: hazır':'Disk yazma erişimi: kontrol gerekli')+'\\n'+
+     (dg.home_correct?'Çalışma klasörü: doğru':'Çalışma klasörü: yapılandırma hatası')+'\n'+
+     (dg.storage_writable?'Disk yazma erişimi: hazır':'Disk yazma erişimi: kontrol gerekli')+'\n'+
      (dg.category==='none'?'Son hata: yok':'Önceki hata: '+dg.message);
  }
  const hr=await fetch('/api/history',{cache:'no-store'});
@@ -382,6 +382,24 @@ class Handler(BaseHTTPRequestHandler):
         pass
 
 if __name__ == "__main__":
+    status = diagnostic_status()
+    # Startup self-test does not invoke the LLM or incur API costs.
+    try:
+        check = subprocess.run(
+            ["tradingagents", "--help"], stdin=subprocess.DEVNULL,
+            stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+            timeout=35, check=False,
+        )
+        cli_ok = (check.returncode == 0)
+    except (OSError, subprocess.TimeoutExpired):
+        cli_ok = False
+    print(
+        "TradingAgents startup check: "
+        f"cli_ok={cli_ok} home_correct={status['home_correct']} "
+        f"storage_writable={status['storage_writable']} "
+        f"prior_error_category={status['category']}",
+        flush=True,
+    )
     port = int(os.environ.get("PORT", "8080"))
     print(f"TradingAgents Lab listening on {port}", flush=True)
     ThreadingHTTPServer(("0.0.0.0", port), Handler).serve_forever()
