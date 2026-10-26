@@ -313,6 +313,84 @@ class PaperTradeTests(unittest.TestCase):
         self.assertEqual(h["d7"]["matched"],1)
         self.assertGreaterEqual(r["ai_paired"]["exclusions"]["hold_ignored"],1)
 
+    def test_ledger_replay_checks_realized_unrealized_and_fees(self):
+        import lab_validation as q
+        with patch.object(l,"market",side_effect=self.ticker_quote):
+            l.paper_order({"ticker":"BTC-USD","side":"BUY","amount":10})
+            l.paper_order({"ticker":"BTC-USD","side":"SELL","amount":5})
+        audit=q.audit_portfolio(prices={"BTC-USD":50000})
+        self.assertEqual(audit["status"],"PASS")
+        self.assertEqual(audit["trade_count"],2)
+        self.assertAlmostEqual(audit["saved_cash"],audit["ledger_cash"],places=4)
+        self.assertAlmostEqual(audit["closed_pnl"]+audit["open_pnl"],
+                               audit["total_nav"]-audit["starting_usd"],places=4)
+        self.assertGreater(audit["commission_total"],0)
+
+    def test_ledger_audit_detects_corruption_without_changing_account(self):
+        import lab_validation as q
+        with patch.object(l,"market",side_effect=self.ticker_quote):
+            l.paper_order({"ticker":"BTC-USD","side":"BUY","amount":10})
+        with l.connect() as db:
+            db.execute("UPDATE positions SET qty=qty*1.25 WHERE ticker='BTC-USD'")
+        result=q.audit_portfolio(prices={"BTC-USD":50000})
+        self.assertEqual(result["status"],"MISMATCH")
+        self.assertTrue(any("miktar" in e for e in result["errors"]))
+        with l.connect() as db:
+            qty=db.execute("SELECT qty FROM positions WHERE ticker='BTC-USD'").fetchone()["qty"]
+        self.assertGreater(qty,0.0002)
+
+    def test_forward_signal_is_prospective_idempotent_and_not_current_close(self):
+        import lab_validation as q
+        start=datetime(2026,8,1,tzinfo=timezone.utc)
+        # Oct 26 is yesterday relative to Oct 27 UTC. The bar for Oct 27
+        # is deliberately incomplete and MUST NOT enter signals.
+        bars=[{"time":(start+timedelta(days=i)).isoformat(),
+               "open":100+i*0.5,"close":100+i*0.5}
+              for i in range((datetime(2026,10,28,tzinfo=timezone.utc)-start).days)]
+        now=datetime(2026,10,27,18,tzinfo=timezone.utc)
+        one=q.record_forward("BTC-USD",now=now,bars=bars)
+        two=q.record_forward("BTC-USD",now=now,bars=bars)
+        self.assertEqual(one["new"],5)
+        self.assertEqual(two["new"],0)
+        self.assertEqual(two["existing"],5)
+        early=q.evaluate_forward("BTC-USD",now=now,bars=bars)
+        self.assertEqual(early["updated"],0)
+        snap=q.forward_status()
+        self.assertEqual(len(snap["records"]),5)
+        self.assertEqual({p["signal_day"] for p in snap["records"]},{"2026-10-26"})
+        self.assertTrue(all(p["target_close"] is None for p in snap["records"]))
+        next_day=datetime(2026,10,28,12,tzinfo=timezone.utc)
+        completed=q.evaluate_forward("BTC-USD",now=next_day,bars=bars)
+        again=q.evaluate_forward("BTC-USD",now=next_day,bars=bars)
+        self.assertEqual(completed["updated"],5)
+        self.assertEqual(again["updated"],0)
+        self.assertTrue(all(p["target_close"] is not None for p in q.forward_status()["records"]))
+
+    def test_forward_cannot_backfill_stale_ended_data(self):
+        import lab_validation as q
+        base=datetime(2026,9,1,tzinfo=timezone.utc)
+        bars=[{"time":(base+timedelta(days=i)).isoformat(),
+               "open":100,"close":100} for i in range(55)]
+        with self.assertRaisesRegex(ValueError,"dün"):
+            q.record_forward("ETH-USD",now=datetime(2026,10,27,18,tzinfo=timezone.utc),bars=bars)
+        self.assertEqual(q.forward_status()["records"],[])
+
+    def test_strategy_stability_and_entry_regime_trade_replay(self):
+        import lab_validation as q
+        import lab_walkforward as wf
+        bars=self.walk_bars()
+        report=wf.calculate(bars,"ETH-USD")
+        review=q.stability(report)
+        self.assertEqual(review["fold_count"],report["fold_count"])
+        self.assertEqual(review["status"],"FURTHER_PAPER_TESTING_REQUIRED")
+        self.assertEqual(sum(review["selection_frequency"].values()),report["fold_count"])
+        audit=q.trade_attribution(bars,report)
+        self.assertEqual(audit["open_count"]+audit["closed_count"],len(audit["events"]))
+        self.assertTrue(all(item["entry_regime"] in ("Yükseliş","Düşüş","Yatay")
+                            for item in audit["events"]))
+        self.assertTrue(all(item["entry_day"]<=item["exit_day"] for item in audit["events"]
+                            if item["exit_day"]))
+
     def test_backtest_has_one_bar_delay_and_no_network(self):
         start = datetime(2026, 1, 1, tzinfo=timezone.utc)
         bars = []
